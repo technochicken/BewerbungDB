@@ -1,0 +1,220 @@
+{% extends "base.html" %}
+{% block title %}Neue Stelle – BewerbungsDB{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl">
+
+  <div class="flex items-center gap-3 mb-5">
+    <a href="/jobs" class="text-sm text-slate-500 hover:text-slate-700">&larr; Zurück</a>
+    <h1 class="text-xl font-bold text-slate-800">Neue Stelle manuell erfassen</h1>
+  </div>
+
+  <form method="post" action="/jobs/new" class="space-y-5">
+
+    {# Basic data #}
+    <div class="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+      <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">Grunddaten</h2>
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+
+        <div class="sm:col-span-2">
+          <label class="field-label">Berufsbezeichnung *</label>
+          <input type="text" name="title" required
+                 placeholder="z.B. Senior Backend Entwickler (m/w/d)" class="field-input">
+        </div>
+
+        <div>
+          <label class="field-label">Unternehmen</label>
+          <input type="text" name="company" placeholder="z.B. Acme GmbH" class="field-input">
+        </div>
+
+        <div>
+          <label class="field-label">Standort</label>
+          <input type="text" name="location" placeholder="z.B. München, Bayern" class="field-input">
+        </div>
+
+        <div>
+          <label class="field-label">Arbeitszeit / Beschäftigungsart</label>
+          <input type="text" name="job_type" placeholder="z.B. Vollzeit, Remote, Hybrid" class="field-input">
+        </div>
+
+        <div>
+          <label class="field-label">Gehalt / Vergütung</label>
+          <input type="text" name="salary" placeholder="z.B. 65.000 – 80.000 € / Jahr" class="field-input">
+        </div>
+
+        <div>
+          <label class="field-label">Eintrittsdatum</label>
+          <input type="text" name="expires_at" placeholder="z.B. 2026-07-01 oder sofort" class="field-input">
+        </div>
+
+        <div>
+          <label class="field-label">Bewerbungsstatus</label>
+          <select name="status" class="field-input">
+            {% for st in ALL_STATUSES %}
+            <option value="{{ st }}">{{ st }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="sm:col-span-2">
+          <label class="field-label">Tags <span class="font-normal text-slate-400">(kommagetrennt)</span></label>
+          <input type="text" name="tags" placeholder="python, remote, startup, backend" class="field-input">
+        </div>
+
+      </div>
+    </div>
+
+    {# Links & Monitoring #}
+    <div class="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+      <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-1">Links &amp; Monitoring</h2>
+      <p class="text-xs text-slate-400 mb-4">
+        Die Monitoring-URL wird täglich automatisch geprüft und die Stelle als "Geschlossen" markiert,
+        wenn sie nicht mehr erreichbar ist oder das Keyword fehlt.
+      </p>
+      <div class="space-y-4">
+        <div>
+          <label class="field-label">Bewerbungs-URL</label>
+          <input type="url" name="url" placeholder="https://unternehmen.de/jobs/stelle-xyz" class="field-input">
+          <span class="field-hint">Direkter Link zur Stelle – erscheint als "Zum Angebot"-Button</span>
+        </div>
+        <div>
+          <label class="field-label">Monitoring-URL <span class="font-normal text-slate-400">(optional)</span></label>
+          <input type="url" name="check_url" placeholder="https://unternehmen.de/karriere/" class="field-input">
+          <span class="field-hint">Leer lassen, um die Bewerbungs-URL zu überwachen</span>
+        </div>
+        <div>
+          <label class="field-label">Monitoring-Keyword <span class="font-normal text-slate-400">(optional)</span></label>
+          <input type="text" name="check_keyword" placeholder='z.B. "Jetzt bewerben" oder der Jobtitel' class="field-input">
+          <span class="field-hint">Muss auf der Monitoring-URL vorkommen – fehlt es, gilt die Stelle als geschlossen</span>
+        </div>
+      </div>
+    </div>
+
+    {# Content #}
+    <div class="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+      <h2 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-4">Inhalte</h2>
+      <div class="space-y-4">
+        <div>
+          <label class="field-label">Stellenbeschreibung</label>
+          <textarea name="description" rows="10" class="field-input"
+                    placeholder="Hier den vollständigen Beschreibungstext der Stelle einfügen…"></textarea>
+        </div>
+        <div>
+          <label class="field-label">Anforderungen</label>
+          <textarea name="requirements" rows="5" class="field-input"
+                    placeholder="Gewünschte Qualifikationen, Skills, Erfahrung…"></textarea>
+        </div>
+        <div>
+          <label class="field-label">Notizen</label>
+          <textarea name="notes" rows="4" class="field-input"
+                    placeholder="Persönliche Notizen, Kontaktpersonen, erste Eindrücke…"></textarea>
+        </div>
+      </div>
+    </div>
+
+    {# Bewerbung & Kontakt (collapsed) #}
+    <div class="bg-white rounded-lg border border-slate-200 p-5 shadow-sm" x-data="{ open: false }">
+      <button type="button" @click="open = !open"
+              class="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 font-medium w-full text-left">
+        <span x-text="open ? '▾' : '▸'">▸</span>
+        Bewerbung &amp; Kontakt
+        <span class="text-xs font-normal text-slate-400 ml-1">Ansprechpartner, Anschreiben, Bewerbungsdatum</span>
+      </button>
+      <div x-show="open" x-cloak class="mt-5 space-y-4">
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div>
+            <label class="field-label">Anrede</label>
+            <select name="contact_salutation" class="field-input">
+              <option value="">—</option>
+              <option value="Frau">Frau</option>
+              <option value="Herr">Herr</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">Titel</label>
+            <select name="contact_title" class="field-input">
+              <option value="">—</option>
+              <option value="Dr.">Dr.</option>
+              <option value="Prof.">Prof.</option>
+              <option value="Prof. Dr.">Prof. Dr.</option>
+            </select>
+          </div>
+          <div>
+            <label class="field-label">Vorname</label>
+            <input type="text" name="contact_first_name" class="field-input">
+          </div>
+          <div>
+            <label class="field-label">Nachname</label>
+            <input type="text" name="contact_last_name" class="field-input">
+          </div>
+          <div>
+            <label class="field-label">E-Mail</label>
+            <input type="email" name="contact_email" placeholder="bewerbung@unternehmen.de" class="field-input">
+          </div>
+          <div>
+            <label class="field-label">Bewerbungsdatum</label>
+            <input type="date" name="application_date" class="field-input">
+          </div>
+          <div class="sm:col-span-2 grid grid-cols-3 gap-3">
+            <div class="col-span-2">
+              <label class="field-label">Straße</label>
+              <input type="text" name="contact_street" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Hausnr.</label>
+              <input type="text" name="contact_street_nr" class="field-input">
+            </div>
+          </div>
+          <div>
+            <label class="field-label">PLZ</label>
+            <input type="text" name="contact_plz" placeholder="80331" class="field-input">
+          </div>
+          <div>
+            <label class="field-label">Ort</label>
+            <input type="text" name="contact_city" placeholder="München" class="field-input">
+          </div>
+          <div>
+            <label class="field-label">Stellenbezeichnung (personalisiert)</label>
+            <input type="text" name="job_name_personalized"
+                   placeholder='z.B. "Einkäuferin (m/w/d)"' class="field-input">
+            <span class="field-hint">Für das Anschreiben – angepasste Form der Berufsbezeichnung</span>
+          </div>
+          <div>
+            <label class="field-label">Unternehmens-Floskel</label>
+            <input type="text" name="company_floskel"
+                   placeholder='z.B. "bei der ABC GmbH"' class="field-input">
+          </div>
+          <div class="sm:col-span-2">
+            <label class="field-label">Bewerbungstext</label>
+            <textarea name="bewerbungstext" rows="8" class="field-input"
+                      placeholder="Text des Anschreibens…"></textarea>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# Advanced (collapsed) #}
+    <div class="bg-white rounded-lg border border-slate-200 p-5 shadow-sm" x-data="{ open: false }">
+      <button type="button" @click="open = !open"
+              class="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 font-medium w-full text-left">
+        <span x-text="open ? '▾' : '▸'">▸</span>
+        Erweitert (HTML-Inhalt, externe ID)
+      </button>
+      <div x-show="open" x-cloak class="mt-4 space-y-4">
+        <div>
+          <label class="field-label">HTML-Seiteninhalt <span class="font-normal text-slate-400">(optional)</span></label>
+          <textarea name="html_content" rows="4" class="field-input"
+                    style="font-family:monospace; font-size:0.75rem"
+                    placeholder="Rohes HTML der Stellenseite – wird als Vorschau gerendert"></textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="flex gap-3">
+      <button type="submit" class="btn-primary">Stelle speichern</button>
+      <a href="/jobs" class="btn-secondary">Abbrechen</a>
+    </div>
+
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Environment — copy .env.example to .env and fill in your values
+.env
+
+# Database — contains real user data, never commit
+data/*.db
+
+# Claude Code local config — may contain credentials or personal paths
+.claude/settings.local.json
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db

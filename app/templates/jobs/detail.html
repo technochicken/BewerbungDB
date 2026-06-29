@@ -1,0 +1,663 @@
+{% extends "base.html" %}
+{% block title %}{{ job.title }} – BewerbungsDB{% endblock %}
+
+{% block content %}
+{% set status_labels = {
+  'new': 'Neu', 'reviewing': 'Prüfen', 'applied': 'Beworben',
+  'interview': 'Gespräch', 'offer': 'Angebot', 'accepted': 'Angenommen',
+  'rejected': 'Abgelehnt', 'closed': 'Geschlossen', 'irrelevant': 'Irrelevant'
+} %}
+
+<div x-data="{
+  tab: 'details',
+  parsing: false,
+  parseError: '',
+  suggestions: null,
+  selected: {},
+  async runAutoParse() {
+    this.parsing = true;
+    this.parseError = '';
+    this.suggestions = null;
+    try {
+      const r = await fetch('/jobs/{{ job.id }}/auto-parse', { method: 'POST' });
+      const data = await r.json();
+      if (!r.ok) { this.parseError = data.detail || 'Fehler beim Parsen'; return; }
+      if (Object.keys(data).length === 0) { this.parseError = 'Keine neuen Informationen gefunden.'; return; }
+      this.suggestions = data;
+      this.selected = Object.fromEntries(Object.keys(data).map(k => [k, true]));
+    } catch(e) { this.parseError = 'Netzwerkfehler: ' + e.message; }
+    finally { this.parsing = false; }
+  },
+  applySelected() {
+    const labels = {
+      contact_salutation:'Anrede', contact_title:'Titel',
+      contact_first_name:'Vorname', contact_last_name:'Nachname',
+      contact_email:'E-Mail', contact_street:'Straße',
+      contact_street_nr:'Hausnr.', contact_plz:'PLZ', contact_city:'Ort',
+      job_name_personalized:'Stellenbezeichnung (personalisiert)',
+      company_floskel:'Unternehmens-Floskel'
+    };
+    for (const [k, v] of Object.entries(this.suggestions)) {
+      if (!this.selected[k]) continue;
+      const el = document.querySelector('[name=' + k + ']');
+      if (el) el.value = v;
+    }
+    this.suggestions = null;
+    this.tab = 'edit';
+  }
+}" class="space-y-4 max-w-5xl">
+
+  {# ── Header card ─────────────────────────────────────────────────────────── #}
+  <div class="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+
+    {# Breadcrumb #}
+    <div class="flex flex-wrap items-center gap-2 text-xs text-slate-400 mb-3">
+      <a href="/jobs" class="hover:text-blue-600">&larr; Alle Stellen</a>
+      <span>&middot;</span>
+      <span class="font-mono font-bold text-sm px-2 py-0.5 rounded select-all"
+            style="background:#1e3a5f; color:#93c5fd; border:1px solid #1e40af;"
+            title="Interne Job-ID – für externe Tools">ID&nbsp;#{{ job.id }}</span>
+      {% if job.source and job.source != 'manual' %}
+      <span>&middot;</span>
+      <span class="capitalize">Quelle: {{ job.source }}</span>
+      {% endif %}
+      {% if job.external_id %}
+      <span>&middot;</span>
+      <span class="font-mono bg-slate-100 px-1.5 py-0.5 rounded">{{ job.external_id }}</span>
+      {% endif %}
+    </div>
+
+    <div class="flex flex-wrap items-start justify-between gap-4">
+
+      {# Left: title + meta #}
+      <div class="flex-1 min-w-0">
+        <h1 class="text-xl font-bold text-slate-800 leading-snug mb-2">{{ job.title }}</h1>
+
+        <div class="flex flex-wrap gap-x-5 gap-y-1 text-sm mb-3">
+          {% if job.company %}
+          <span class="font-semibold text-slate-700">{{ job.company }}</span>
+          {% endif %}
+          {% if job.location %}
+          <span class="text-slate-500">📍 {{ job.location }}</span>
+          {% endif %}
+          {% if job.job_type %}
+          <span class="text-slate-500">⏱ {{ job.job_type }}</span>
+          {% endif %}
+          {% if job.salary %}
+          <span class="font-semibold text-green-700">💶 {{ job.salary }}</span>
+          {% endif %}
+          {% if job.expires_at %}
+          <span class="text-slate-500">🗓 ab {{ job.expires_at }}</span>
+          {% endif %}
+        </div>
+
+        {# Tags #}
+        {% if job.tags %}
+        <div class="flex flex-wrap gap-1.5">
+          {% for tag in job.tags %}
+          <a href="/jobs?tag={{ tag }}"
+             class="px-2 py-0.5 rounded text-xs bg-blue-50 text-blue-700 font-medium hover:bg-blue-100 transition-colors">
+            {{ tag }}
+          </a>
+          {% endfor %}
+        </div>
+        {% endif %}
+      </div>
+
+      {# Right: status + actions #}
+      <div class="flex flex-col items-end gap-2.5 shrink-0">
+
+        {# Status quick-change #}
+        <form method="post" action="/jobs/{{ job.id }}/status">
+          <select name="status" onchange="this.form.submit()"
+                  class="border border-slate-300 rounded-md px-2.5 py-1.5 text-sm font-medium bg-white cursor-pointer focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  style="min-width: 130px">
+            {% for st in ALL_STATUSES %}
+            <option value="{{ st }}" {% if job.status == st %}selected{% endif %}>
+              {{ status_labels.get(st, st) }}
+            </option>
+            {% endfor %}
+          </select>
+        </form>
+
+        {# Action buttons #}
+        <div class="flex flex-wrap gap-2 justify-end">
+          {% if job.url %}
+          <a href="{{ job.url }}" target="_blank" rel="noopener"
+             class="text-xs bg-blue-600 hover:bg-blue-500 text-white px-3 py-1.5 rounded-md font-medium transition-colors">
+            Zum Angebot ↗
+          </a>
+          {% endif %}
+          {% if job.check_url or job.url %}
+          <form method="post" action="/jobs/{{ job.id }}/check-url">
+            <button type="submit"
+                    class="text-xs border border-slate-300 bg-white hover:bg-slate-50 text-slate-600 px-3 py-1.5 rounded-md transition-colors">
+              URL prüfen
+            </button>
+          </form>
+          {% endif %}
+          <form method="post" action="/jobs/{{ job.id }}/delete"
+                onsubmit="return confirm('Stelle &quot;{{ job.title }}&quot; wirklich löschen?\nDies kann nicht rückgängig gemacht werden.')">
+            <button type="submit"
+                    class="text-xs border border-red-200 bg-white hover:bg-red-50 text-red-500 px-3 py-1.5 rounded-md transition-colors">
+              Löschen
+            </button>
+          </form>
+        </div>
+
+        {# Timestamps #}
+        <div class="text-xs text-slate-400 text-right space-y-0.5">
+          <div>Hinzugefügt: {{ job.created_at[:10] if job.created_at else '—' }}</div>
+          {% if job.last_changed_at %}
+          <div>Geändert: {{ job.last_changed_at[:16].replace('T',' ') }}</div>
+          {% endif %}
+          {% if job.last_checked_at %}
+          <div>Geprüft: {{ job.last_checked_at[:16].replace('T',' ') }}</div>
+          {% endif %}
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# ── Tab navigation ───────────────────────────────────────────────────────── #}
+  <div class="bg-white border border-slate-200 rounded-lg overflow-hidden">
+    <div class="border-b border-slate-200 px-2 overflow-x-auto">
+      <nav class="flex">
+        <button @click="tab = 'details'"
+                :class="tab === 'details' ? 'tab-btn active' : 'tab-btn'">
+          Details
+        </button>
+        <button @click="tab = 'bewerbung'"
+                :class="tab === 'bewerbung' ? 'tab-btn active' : 'tab-btn'">
+          Bewerbung
+        </button>
+        <button @click="tab = 'edit'"
+                :class="tab === 'edit' ? 'tab-btn active' : 'tab-btn'">
+          Bearbeiten
+        </button>
+        <button @click="tab = 'history'"
+                :class="tab === 'history' ? 'tab-btn active' : 'tab-btn'">
+          Verlauf
+          {% if history %}
+          <span class="ml-1.5 text-xs bg-slate-200 text-slate-600 rounded-full px-1.5 py-0.5">{{ history|length }}</span>
+          {% endif %}
+        </button>
+        <button @click="tab = 'raw'"
+                :class="tab === 'raw' ? 'tab-btn active' : 'tab-btn'">
+          API-Rohdaten
+        </button>
+      </nav>
+    </div>
+
+    {# ── Details tab ──────────────────────────────────────────────────────── #}
+    <div x-show="tab === 'details'" class="p-5 space-y-5">
+
+      {# Notes – shown prominently if present #}
+      {% if job.notes %}
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-4">
+        <p class="text-xs font-semibold text-amber-700 uppercase tracking-wide mb-2">Meine Notizen</p>
+        <div class="text-sm text-amber-900 whitespace-pre-wrap leading-relaxed">{{ job.notes }}</div>
+      </div>
+      {% endif %}
+
+      {% if job.description %}
+      <div>
+        <h3 class="text-sm font-semibold text-slate-600 uppercase tracking-wide mb-2">Stellenbeschreibung</h3>
+        <div class="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{{ job.description }}</div>
+      </div>
+      {% endif %}
+
+      {% if job.description and job.requirements %}<hr class="border-slate-100">{% endif %}
+
+      {% if job.requirements %}
+      <div>
+        <h3 class="text-sm font-semibold text-slate-600 uppercase tracking-wide mb-2">Anforderungen</h3>
+        <div class="text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{{ job.requirements }}</div>
+      </div>
+      {% endif %}
+
+      {% if job.html_content %}
+      <div x-data="{ showHtml: false }">
+        <button @click="showHtml = !showHtml"
+                class="flex items-center gap-2 text-sm text-blue-600 hover:underline">
+          <span x-text="showHtml ? '▾ HTML ausblenden' : '▸ Gespeicherten HTML-Inhalt anzeigen'"></span>
+        </button>
+        <div x-show="showHtml" x-cloak class="mt-3 border border-slate-200 rounded overflow-auto">
+          <iframe srcdoc="{{ job.html_content | e }}" class="w-full h-96 border-0" sandbox="allow-same-origin"></iframe>
+        </div>
+      </div>
+      {% endif %}
+
+      {% if not job.description and not job.requirements and not job.notes %}
+      <div class="text-center py-8 text-slate-400">
+        <p class="mb-2">Noch keine Beschreibung vorhanden.</p>
+        <button @click="tab = 'edit'"
+                class="text-sm text-blue-600 hover:underline">
+          Im Bearbeiten-Tab ergänzen →
+        </button>
+      </div>
+      {% endif %}
+
+      {% if job.check_url or job.check_keyword %}
+      <div class="border-t border-slate-100 pt-4">
+        <p class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Monitoring</p>
+        <div class="text-xs text-slate-500 space-y-1">
+          {% if job.check_url %}
+          <div>URL: <a href="{{ job.check_url }}" target="_blank" class="text-blue-500 hover:underline break-all">{{ job.check_url }}</a></div>
+          {% endif %}
+          {% if job.check_keyword %}
+          <div>Keyword: <code class="bg-slate-100 px-1 rounded">{{ job.check_keyword }}</code></div>
+          {% endif %}
+        </div>
+      </div>
+      {% endif %}
+    </div>
+
+    {# ── Bewerbung tab ────────────────────────────────────────────────────── #}
+    <div x-show="tab === 'bewerbung'" x-cloak class="p-5 space-y-6">
+
+      {# Ansprechpartner #}
+      <div>
+        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Ansprechpartner</h3>
+        {% set has_contact = job.contact_first_name or job.contact_last_name or job.contact_email
+                             or job.contact_street or job.contact_city %}
+        {% if has_contact %}
+        <div class="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm text-slate-700 space-y-1">
+          {% set salutation_labels = {'Frau': 'Frau', 'Herr': 'Herr'} %}
+          <div class="font-semibold">
+            {% if job.contact_salutation %}{{ job.contact_salutation }} {% endif %}
+            {% if job.contact_title %}{{ job.contact_title }} {% endif %}
+            {{ job.contact_first_name or '' }} {{ job.contact_last_name or '' }}
+          </div>
+          {% if job.contact_email %}
+          <div><a href="mailto:{{ job.contact_email }}" class="text-blue-600 hover:underline">{{ job.contact_email }}</a></div>
+          {% endif %}
+          {% if job.contact_street or job.contact_street_nr %}
+          <div>{{ job.contact_street or '' }} {{ job.contact_street_nr or '' }}</div>
+          {% endif %}
+          {% if job.contact_plz or job.contact_city %}
+          <div>{{ job.contact_plz or '' }} {{ job.contact_city or '' }}</div>
+          {% endif %}
+        </div>
+        {% else %}
+        <p class="text-sm text-slate-400">Noch kein Ansprechpartner hinterlegt.
+          <button @click="tab = 'edit'" class="text-blue-600 hover:underline ml-1">Im Bearbeiten-Tab ergänzen →</button>
+        </p>
+        {% endif %}
+      </div>
+
+      {# Bewerbungsdaten #}
+      <div>
+        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Bewerbungsdaten</h3>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 text-sm">
+          <div>
+            <span class="field-label">Bewerbungsdatum</span>
+            <p class="text-slate-700 mt-1">{{ job.application_date or '—' }}</p>
+          </div>
+          <div>
+            <span class="field-label">Stellenbezeichnung (personalisiert)</span>
+            <p class="text-slate-700 mt-1">{{ job.job_name_personalized or '—' }}</p>
+          </div>
+          <div class="sm:col-span-2">
+            <span class="field-label">Unternehmens-Floskel</span>
+            <p class="text-slate-700 mt-1">{{ job.company_floskel or '—' }}</p>
+          </div>
+        </div>
+      </div>
+
+      {# Bewerbungstext #}
+      {% if job.bewerbungstext %}
+      <div>
+        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Bewerbungstext</h3>
+        <div class="bg-white border border-slate-200 rounded-lg p-4 text-sm text-slate-700 whitespace-pre-wrap leading-relaxed">{{ job.bewerbungstext }}</div>
+      </div>
+      {% else %}
+      <div>
+        <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-3">Bewerbungstext</h3>
+        <p class="text-sm text-slate-400">Noch kein Bewerbungstext hinterlegt.
+          <button @click="tab = 'edit'" class="text-blue-600 hover:underline ml-1">Im Bearbeiten-Tab ergänzen →</button>
+        </p>
+      </div>
+      {% endif %}
+
+    </div>
+
+    {# ── Edit tab ─────────────────────────────────────────────────────────── #}
+    <div x-show="tab === 'edit'" x-cloak>
+      <form method="post" action="/jobs/{{ job.id }}/edit" class="divide-y divide-slate-100">
+
+        {# Section: Basic data #}
+        <div class="p-5 space-y-4">
+          <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Grunddaten</h3>
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div class="sm:col-span-2">
+              <label class="field-label">Berufsbezeichnung *</label>
+              <input type="text" name="title" required value="{{ job.title or '' }}" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Unternehmen</label>
+              <input type="text" name="company" value="{{ job.company or '' }}" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Standort</label>
+              <input type="text" name="location" value="{{ job.location or '' }}"
+                     placeholder="z.B. München, Bayern" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Arbeitszeit / Beschäftigungsart</label>
+              <input type="text" name="job_type" value="{{ job.job_type or '' }}"
+                     placeholder="z.B. Vollzeit, Remote, Teilzeit" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Gehalt / Vergütung</label>
+              <input type="text" name="salary" value="{{ job.salary or '' }}"
+                     placeholder="z.B. 60.000 – 70.000 € / Jahr" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Eintrittsdatum</label>
+              <input type="text" name="expires_at" value="{{ job.expires_at or '' }}"
+                     placeholder="z.B. 2026-07-01 oder sofort" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Bewerbungsstatus</label>
+              <select name="status" class="field-input">
+                {% for st in ALL_STATUSES %}
+                <option value="{{ st }}" {% if job.status == st %}selected{% endif %}>
+                  {{ status_labels.get(st, st) }}
+                </option>
+                {% endfor %}
+              </select>
+              <span class="field-hint">Neu → Prüfen → Beworben → Gespräch → Angebot → Angenommen/Abgelehnt</span>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="field-label">Tags <span class="font-normal text-slate-400">(kommagetrennt)</span></label>
+              <input type="text" name="tags" value="{{ job.tags | join(', ') }}"
+                     placeholder="python, remote, backend, startup" class="field-input">
+              <span class="field-hint">Werden für die Filterung in der Stellenliste genutzt</span>
+            </div>
+          </div>
+        </div>
+
+        {# Section: Links & Monitoring #}
+        <div class="p-5 space-y-4">
+          <div>
+            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Links &amp; Monitoring</h3>
+            <p class="text-xs text-slate-400 mt-1">
+              Das System kann URLs automatisch täglich prüfen und die Stelle als "Geschlossen" markieren,
+              wenn sie nicht mehr erreichbar ist oder ein Keyword fehlt.
+            </p>
+          </div>
+          <div>
+            <label class="field-label">Bewerbungs-URL</label>
+            <input type="url" name="url" value="{{ job.url or '' }}"
+                   placeholder="https://unternehmen.de/jobs/stelle-xyz" class="field-input">
+            <span class="field-hint">Direkter Link zur Stelle oder zur Bewerbungsseite ("Zum Angebot"-Button)</span>
+          </div>
+          <div>
+            <label class="field-label">Monitoring-URL <span class="font-normal text-slate-400">(optional)</span></label>
+            <input type="url" name="check_url" value="{{ job.check_url or '' }}"
+                   placeholder="https://unternehmen.de/karriere/stellen/" class="field-input">
+            <span class="field-hint">
+              Diese URL wird automatisch auf Erreichbarkeit geprüft.
+              Leer lassen, um die Bewerbungs-URL zu nutzen.
+            </span>
+          </div>
+          <div>
+            <label class="field-label">Monitoring-Keyword <span class="font-normal text-slate-400">(optional)</span></label>
+            <input type="text" name="check_keyword" value="{{ job.check_keyword or '' }}"
+                   placeholder='z.B. "Softwareentwickler" oder "Jetzt bewerben"' class="field-input">
+            <span class="field-hint">
+              Muss auf der Monitoring-URL vorkommen.
+              Fehlt es, wird die Stelle automatisch als "Geschlossen" markiert.
+            </span>
+          </div>
+        </div>
+
+        {# Section: Content #}
+        <div class="p-5 space-y-4">
+          <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Inhalte</h3>
+          <div>
+            <label class="field-label">Stellenbeschreibung</label>
+            <textarea name="description" rows="14" class="field-input">{{ job.description or '' }}</textarea>
+            <span class="field-hint">Vom Unternehmen veröffentlichter Beschreibungstext – wird bei Arbeitsagentur-Stellen automatisch ausgefüllt</span>
+          </div>
+          <div>
+            <label class="field-label">Anforderungen</label>
+            <textarea name="requirements" rows="6" class="field-input">{{ job.requirements or '' }}</textarea>
+            <span class="field-hint">Gewünschte Qualifikationen, Skills, Berufserfahrung</span>
+          </div>
+          <div>
+            <label class="field-label">Meine Notizen</label>
+            <textarea name="notes" rows="6" class="field-input"
+                      placeholder="Persönliche Notizen, Gesprächsnotizen, Kontaktpersonen, Eindrücke…">{{ job.notes or '' }}</textarea>
+            <span class="field-hint">Nur für dich – wird nicht exportiert und nicht aus der API zurückgegeben</span>
+          </div>
+        </div>
+
+        {# Section: Bewerbung & Kontakt #}
+        <div class="p-5 space-y-4">
+          <div>
+            <h3 class="text-xs font-semibold text-slate-500 uppercase tracking-wide">Bewerbung &amp; Kontakt</h3>
+            <p class="text-xs text-slate-400 mt-1">Ansprechpartner beim Unternehmen und Daten für das Anschreiben.</p>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+            <div>
+              <label class="field-label">Anrede</label>
+              <select name="contact_salutation" class="field-input">
+                <option value="" {% if not job.contact_salutation %}selected{% endif %}>—</option>
+                <option value="Frau" {% if job.contact_salutation == 'Frau' %}selected{% endif %}>Frau</option>
+                <option value="Herr" {% if job.contact_salutation == 'Herr' %}selected{% endif %}>Herr</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">Titel</label>
+              <select name="contact_title" class="field-input">
+                <option value="" {% if not job.contact_title %}selected{% endif %}>—</option>
+                <option value="Dr." {% if job.contact_title == 'Dr.' %}selected{% endif %}>Dr.</option>
+                <option value="Prof." {% if job.contact_title == 'Prof.' %}selected{% endif %}>Prof.</option>
+                <option value="Prof. Dr." {% if job.contact_title == 'Prof. Dr.' %}selected{% endif %}>Prof. Dr.</option>
+              </select>
+            </div>
+            <div>
+              <label class="field-label">Vorname</label>
+              <input type="text" name="contact_first_name" value="{{ job.contact_first_name or '' }}" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Nachname</label>
+              <input type="text" name="contact_last_name" value="{{ job.contact_last_name or '' }}" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">E-Mail</label>
+              <input type="email" name="contact_email" value="{{ job.contact_email or '' }}"
+                     placeholder="bewerbung@unternehmen.de" class="field-input">
+            </div>
+            <div class="sm:col-span-2 grid grid-cols-3 gap-3">
+              <div class="col-span-2">
+                <label class="field-label">Straße</label>
+                <input type="text" name="contact_street" value="{{ job.contact_street or '' }}" class="field-input">
+              </div>
+              <div>
+                <label class="field-label">Hausnr.</label>
+                <input type="text" name="contact_street_nr" value="{{ job.contact_street_nr or '' }}" class="field-input">
+              </div>
+            </div>
+            <div>
+              <label class="field-label">PLZ</label>
+              <input type="text" name="contact_plz" value="{{ job.contact_plz or '' }}"
+                     placeholder="80331" class="field-input">
+            </div>
+            <div>
+              <label class="field-label">Ort</label>
+              <input type="text" name="contact_city" value="{{ job.contact_city or '' }}"
+                     placeholder="München" class="field-input">
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 sm:grid-cols-2 gap-4 border-t border-slate-100 pt-4">
+            <div>
+              <label class="field-label">Bewerbungsdatum</label>
+              <input type="date" name="application_date" value="{{ job.application_date or '' }}" class="field-input">
+              <span class="field-hint">Leer = wird beim Speichern nicht gesetzt</span>
+            </div>
+            <div>
+              <label class="field-label">Stellenbezeichnung (personalisiert)</label>
+              <input type="text" name="job_name_personalized" value="{{ job.job_name_personalized or '' }}"
+                     placeholder='z.B. "Einkäuferin (m/w/d)"' class="field-input">
+              <span class="field-hint">Für das Anschreiben – z.B. grammatikalisch angepasste Form</span>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="field-label">Unternehmens-Floskel</label>
+              <input type="text" name="company_floskel" value="{{ job.company_floskel or '' }}"
+                     placeholder='z.B. "bei der ABC GmbH"' class="field-input">
+              <span class="field-hint">Formulierung für das Anschreiben, z.B. "bei der XYZ AG"</span>
+            </div>
+            <div class="sm:col-span-2">
+              <label class="field-label">Bewerbungstext</label>
+              <textarea name="bewerbungstext" rows="12" class="field-input"
+                        placeholder="Text des Anschreibens…">{{ job.bewerbungstext or '' }}</textarea>
+              <span class="field-hint">Freitext für das Anschreiben – wird extern weiterverarbeitet</span>
+            </div>
+          </div>
+        </div>
+
+        {# Section: Advanced (collapsed) #}
+        <div class="p-5" x-data="{ open: false }">
+          <button type="button" @click="open = !open"
+                  class="flex items-center gap-2 text-sm text-slate-500 hover:text-slate-700 font-medium w-full text-left">
+            <span x-text="open ? '▾' : '▸'">▸</span>
+            Erweitert
+          </button>
+          <div x-show="open" x-cloak class="mt-4 space-y-4">
+            <div>
+              <label class="field-label">HTML-Seiteninhalt <span class="font-normal text-slate-400">(optional)</span></label>
+              <textarea name="html_content" rows="5" class="field-input" style="font-family:monospace; font-size:0.75rem">{{ job.html_content or '' }}</textarea>
+              <span class="field-hint">Rohes HTML der Stellenseite – wird im Details-Tab als Vorschau gerendert</span>
+            </div>
+            <div>
+              <label class="field-label">Externe Referenz-ID</label>
+              <input type="text" name="external_id" value="{{ job.external_id or '' }}"
+                     class="field-input" style="font-family:monospace; font-size:0.875rem">
+              <span class="field-hint">Referenznummer von der Arbeitsagentur oder dem Unternehmensportal</span>
+            </div>
+          </div>
+        </div>
+
+        {# Save / Cancel + Auto-Parse #}
+        <div class="px-5 py-4 bg-slate-50 flex flex-wrap gap-3 items-center">
+          <button type="submit" class="btn-primary">Änderungen speichern</button>
+          <button type="button" @click="tab = 'details'" class="btn-secondary">Abbrechen</button>
+          <div class="ml-auto flex items-center gap-2">
+            <button type="button" @click="runAutoParse()"
+                    :disabled="parsing"
+                    class="flex items-center gap-2 text-sm font-medium px-3 py-2 rounded-md border transition-colors"
+                    style="background:#1e293b; border-color:#334155; color:#93c5fd;"
+                    :style="parsing ? 'opacity:0.6;cursor:not-allowed' : ''">
+              <span x-show="!parsing">✨ Auto-Parse (Claude AI)</span>
+              <span x-show="parsing" x-cloak>⏳ Analysiere…</span>
+            </button>
+          </div>
+        </div>
+
+        {# Auto-parse error #}
+        <div x-show="parseError" x-cloak class="px-5 pb-4">
+          <div class="text-sm px-3 py-2 rounded" style="background:#450a0a; color:#f87171; border:1px solid #7f1d1d;">
+            <span x-text="parseError"></span>
+          </div>
+        </div>
+
+      </form>
+    </div>
+
+    {# ── History tab ──────────────────────────────────────────────────────── #}
+    <div x-show="tab === 'history'" x-cloak>
+      {% if history %}
+      <ul class="divide-y divide-slate-100">
+        {% for h in history %}
+        <li class="px-5 py-3 flex items-start gap-4 text-sm">
+          <span class="text-xs text-slate-400 shrink-0 w-36 pt-0.5">
+            {{ h.changed_at[:16].replace('T',' ') if h.changed_at else '' }}
+          </span>
+          <div class="min-w-0 flex-1">
+            <span class="font-medium text-slate-700 text-xs uppercase tracking-wide">{{ h.field }}</span>
+            <div class="text-xs mt-1 break-words space-y-0.5">
+              {% if h.old_value %}
+              <div class="text-red-500 line-through">{{ h.old_value[:200] }}</div>
+              {% endif %}
+              <div class="text-green-700">{{ h.new_value[:200] if h.new_value else '(leer)' }}</div>
+            </div>
+          </div>
+        </li>
+        {% endfor %}
+      </ul>
+      {% else %}
+      <p class="px-5 py-10 text-center text-slate-400 text-sm">
+        Noch keine Änderungen aufgezeichnet.<br>
+        <span class="text-xs">Jede Feldänderung wird hier protokolliert.</span>
+      </p>
+      {% endif %}
+    </div>
+
+    {# ── Raw API data tab ─────────────────────────────────────────────────── #}
+    <div x-show="tab === 'raw'" x-cloak class="p-5">
+      {% if api_data %}
+      <p class="text-xs text-slate-500 mb-3">Rohdaten aus der Arbeitsagentur-API</p>
+      <pre class="text-xs text-slate-700 overflow-auto max-h-[600px] bg-slate-50 rounded-lg p-4 border border-slate-200 leading-relaxed">{{ api_data | tojson(2) }}</pre>
+      {% else %}
+      <div class="py-8 text-center text-slate-400 text-sm">
+        <p>Keine API-Rohdaten vorhanden.</p>
+        <p class="text-xs mt-1">Diese Stelle wurde manuell erfasst.</p>
+      </div>
+      {% endif %}
+    </div>
+
+  </div>{# end tab container #}
+
+  {# ── Auto-parse suggestion modal ──────────────────────────────────────────── #}
+  <div x-show="suggestions" x-cloak
+       class="fixed inset-0 z-50 flex items-center justify-center p-4"
+       style="background:rgba(0,0,0,.7);">
+    <div class="rounded-xl shadow-xl w-full max-w-lg space-y-4 p-6"
+         style="background:#1e293b; border:1px solid #334155;">
+      <h3 class="text-base font-semibold" style="color:#e2e8f0;">
+        ✨ Claude AI hat folgende Felder erkannt
+      </h3>
+      <p class="text-xs" style="color:#94a3b8;">
+        Wähle, welche Felder übernommen werden sollen. Bestehende Werte werden überschrieben.
+      </p>
+
+      <div class="space-y-2 max-h-64 overflow-y-auto pr-1">
+        <template x-for="[key, val] in Object.entries(suggestions || {})" :key="key">
+          <label class="flex items-start gap-3 p-2 rounded cursor-pointer"
+                 style="border:1px solid #334155;">
+            <input type="checkbox" :checked="selected[key]"
+                   @change="selected[key] = $event.target.checked"
+                   class="mt-0.5 shrink-0 accent-blue-500">
+            <div class="min-w-0">
+              <div class="text-xs font-medium" style="color:#94a3b8;" x-text="({
+                contact_salutation:'Anrede', contact_title:'Titel',
+                contact_first_name:'Vorname', contact_last_name:'Nachname',
+                contact_email:'E-Mail', contact_street:'Straße',
+                contact_street_nr:'Hausnr.', contact_plz:'PLZ', contact_city:'Ort',
+                job_name_personalized:'Stellenbezeichnung (personalisiert)',
+                company_floskel:'Unternehmens-Floskel'
+              })[key] || key"></div>
+              <div class="text-sm break-words" style="color:#e2e8f0;" x-text="val"></div>
+            </div>
+          </label>
+        </template>
+      </div>
+
+      <div class="flex gap-3 pt-2">
+        <button @click="applySelected()" class="btn-primary">
+          Ausgewählte übernehmen
+        </button>
+        <button @click="suggestions = null; tab = 'edit'" class="btn-secondary">
+          Abbrechen
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+{% endblock %}

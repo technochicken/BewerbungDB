@@ -1,0 +1,661 @@
+{% extends "base.html" %}
+{% block title %}API-Referenz – BewerbungsDB{% endblock %}
+
+{% block content %}
+{% macro badge(method) %}
+  {% if method == 'GET' %}
+    <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 rounded bg-green-100 text-green-800">GET</span>
+  {% elif method == 'POST' %}
+    <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 rounded bg-blue-100 text-blue-800">POST</span>
+  {% elif method == 'PATCH' %}
+    <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 rounded bg-amber-100 text-amber-800">PATCH</span>
+  {% elif method == 'DELETE' %}
+    <span class="inline-block font-mono text-xs font-bold px-2 py-0.5 rounded bg-red-100 text-red-800">DELETE</span>
+  {% endif %}
+{% endmacro %}
+
+<div class="max-w-4xl space-y-8" x-data="{ section: 'jobs' }">
+
+  <div>
+    <h1 class="text-2xl font-bold text-slate-800">API-Referenz</h1>
+    <p class="text-slate-500 mt-1 text-sm">
+      REST-API für alle Stellen- und Suchkonfigurationsdaten. Basis-URL:
+      <code class="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-xs">{{ base_url }}/api/v1</code>
+    </p>
+  </div>
+
+  <div class="bg-amber-50 border border-amber-200 rounded-lg p-4 text-sm text-amber-900 space-y-1.5">
+    <p class="font-semibold">Authentifizierung erforderlich</p>
+    <p class="text-xs">Jeder API-Request muss einen gültigen API-Key enthalten. Den Key findest du unter
+      <a href="/settings" class="text-blue-600 hover:underline font-medium">Einstellungen → API-Key</a>.
+    </p>
+    <div class="grid grid-cols-1 sm:grid-cols-3 gap-2 mt-2 text-xs font-mono">
+      <div class="bg-amber-100 rounded px-2 py-1.5">?api_key=KEY <span class="font-sans text-amber-700">(Excel, Browser)</span></div>
+      <div class="bg-amber-100 rounded px-2 py-1.5">X-Api-Key: KEY <span class="font-sans text-amber-700">(Header)</span></div>
+      <div class="bg-amber-100 rounded px-2 py-1.5">Authorization: Bearer KEY <span class="font-sans text-amber-700">(curl/SDK)</span></div>
+    </div>
+  </div>
+
+  {# ── Section nav ─────────────────────────────────────────────────────────── #}
+  <div class="flex gap-2 flex-wrap">
+    <button @click="section = 'jobs'"
+            :class="section === 'jobs' ? 'btn-primary !py-1.5 !px-3 !text-xs' : 'btn-secondary !py-1.5 !px-3 !text-xs'">
+      /jobs
+    </button>
+    <button @click="section = 'searches'"
+            :class="section === 'searches' ? 'btn-primary !py-1.5 !px-3 !text-xs' : 'btn-secondary !py-1.5 !px-3 !text-xs'">
+      /searches
+    </button>
+    <button @click="section = 'import'"
+            :class="section === 'import' ? 'btn-primary !py-1.5 !px-3 !text-xs' : 'btn-secondary !py-1.5 !px-3 !text-xs'">
+      Import
+    </button>
+    <button @click="section = 'fields'"
+            :class="section === 'fields' ? 'btn-primary !py-1.5 !px-3 !text-xs' : 'btn-secondary !py-1.5 !px-3 !text-xs'">
+      Felder
+    </button>
+    <button @click="section = 'excel'"
+            :class="section === 'excel' ? 'btn-primary !py-1.5 !px-3 !text-xs' : 'btn-secondary !py-1.5 !px-3 !text-xs'">
+      Excel
+    </button>
+  </div>
+
+  {# ══════════════════════ JOBS SECTION ══════════════════════ #}
+  <div x-show="section === 'jobs'" class="space-y-4">
+
+    {# GET /api/v1/jobs #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('GET') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs</code>
+        <span class="text-xs text-slate-500 ml-2">Alle Stellen abrufen</span>
+        <a href="/api/v1/jobs" target="_blank" class="ml-auto text-xs text-blue-600 hover:underline">Ausprobieren ↗</a>
+      </div>
+      <div class="p-5 space-y-3">
+        <p class="text-xs text-slate-600">Gibt ein JSON-Array aller Stellen zurück. Unterstützt Filterung, Suche und Sortierung.</p>
+        <table class="w-full text-xs">
+          <thead><tr class="border-b border-slate-100">
+            <th class="text-left py-1.5 pr-4 font-semibold text-slate-500 w-28">Parameter</th>
+            <th class="text-left py-1.5 pr-4 font-semibold text-slate-500 w-40">Beispiel</th>
+            <th class="text-left py-1.5 font-semibold text-slate-500">Beschreibung</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-50">
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">status</td><td class="py-1.5 pr-4 font-mono text-slate-600">applied,interview</td><td class="py-1.5 text-slate-600">Kommagetrennte Status-Werte. Werte: new, reviewing, applied, interview, offer, accepted, rejected, closed, irrelevant</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">source</td><td class="py-1.5 pr-4 font-mono text-slate-600">arbeitsagentur</td><td class="py-1.5 text-slate-600">Quelle filtern: <code>arbeitsagentur</code> oder <code>manual</code></td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">tag</td><td class="py-1.5 pr-4 font-mono text-slate-600">python</td><td class="py-1.5 text-slate-600">Nur Stellen mit diesem Tag</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">search</td><td class="py-1.5 pr-4 font-mono text-slate-600">Backend München</td><td class="py-1.5 text-slate-600">Volltext-Suche in Titel, Firma, Ort, Beschreibung</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">sort</td><td class="py-1.5 pr-4 font-mono text-slate-600">changed_desc</td><td class="py-1.5 text-slate-600">created_desc · created_asc · changed_desc · title_asc · company_asc · status · expires_asc</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">limit</td><td class="py-1.5 pr-4 font-mono text-slate-600">100</td><td class="py-1.5 text-slate-600">Max. Einträge (Standard: 500, Max: 2000)</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">offset</td><td class="py-1.5 pr-4 font-mono text-slate-600">500</td><td class="py-1.5 text-slate-600">Offset für Paginierung</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    {# POST /api/v1/jobs #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('POST') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs</code>
+        <span class="text-xs text-slate-500 ml-2">Neue Stelle anlegen</span>
+      </div>
+      <div class="p-5 space-y-3">
+        <p class="text-xs text-slate-600">Legt eine neue Stelle an. Content-Type: <code class="bg-slate-100 px-1 rounded">application/json</code>. Gibt <code class="bg-slate-100 px-1 rounded">{"id": 42}</code> zurück.</p>
+        <div class="bg-slate-900 rounded-lg p-4 text-xs font-mono text-green-300 overflow-auto">
+<pre>POST /api/v1/jobs
+Content-Type: application/json
+
+{
+  "title": "Backend Entwickler (m/w/d)",   // required
+  "company": "Acme GmbH",
+  "location": "München",
+  "status": "new",                          // default: new
+  "url": "https://acme.de/jobs/42",
+  "check_url": "https://acme.de/jobs/42",
+  "check_keyword": "Jetzt bewerben",
+  "job_type": "Vollzeit",
+  "salary": "70.000 €/Jahr",
+  "expires_at": "2026-09-01",
+  "description": "...",
+  "requirements": "...",
+  "notes": "...",
+  "tags": ["python", "remote"],
+  "external_id": "REF-12345",
+  "contact_salutation": "Frau",
+  "contact_title": "Dr.",
+  "contact_first_name": "Maria",
+  "contact_last_name": "Muster",
+  "contact_email": "m.muster@acme.de",
+  "contact_street": "Musterstraße",
+  "contact_street_nr": "1",
+  "contact_plz": "80331",
+  "contact_city": "München",
+  "job_name_personalized": "Backend Entwicklerin (m/w/d)",
+  "company_floskel": "bei der Acme GmbH",
+  "application_date": "2026-06-10",
+  "bewerbungstext": "Sehr geehrte Frau Dr. Muster, ..."
+}</pre>
+        </div>
+      </div>
+    </div>
+
+    {# GET /api/v1/jobs/{id} #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('GET') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs/<span class="text-blue-600">{id}</span></code>
+        <span class="text-xs text-slate-500 ml-2">Einzelne Stelle abrufen</span>
+      </div>
+      <div class="p-5">
+        <p class="text-xs text-slate-600">Gibt alle Felder der Stelle zurück inklusive Tags-Array und alle Kontakt-/Bewerbungsfelder. Gibt 404 zurück wenn nicht gefunden.</p>
+      </div>
+    </div>
+
+    {# PATCH /api/v1/jobs/{id} #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('PATCH') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs/<span class="text-blue-600">{id}</span></code>
+        <span class="text-xs text-slate-500 ml-2">Stelle aktualisieren (partiell)</span>
+      </div>
+      <div class="p-5 space-y-3">
+        <p class="text-xs text-slate-600">
+          Aktualisiert beliebige Felder einer Stelle. Nur gesendete Felder werden geändert — nicht gesendete bleiben unverändert.
+          Jede Änderung wird im Verlauf protokolliert. Gibt <code class="bg-slate-100 px-1 rounded">{"status": "updated"}</code> zurück.
+        </p>
+        <div class="bg-slate-900 rounded-lg p-4 text-xs font-mono text-green-300 overflow-auto">
+<pre>PATCH /api/v1/jobs/42
+Content-Type: application/json
+
+{
+  // Nur zu ändernde Felder senden — alle anderen bleiben unverändert
+
+  // Basisdaten
+  "title": "...",
+  "company": "...",
+  "location": "...",
+  "status": "applied",         // new|reviewing|applied|interview|offer|accepted|rejected|closed|irrelevant
+  "job_type": "...",
+  "salary": "...",
+  "expires_at": "2026-09-01",
+  "tags": ["python", "remote"],
+
+  // Links & Monitoring
+  "url": "...",
+  "check_url": "...",
+  "check_keyword": "...",
+
+  // Inhalte
+  "description": "...",
+  "requirements": "...",
+  "notes": "...",
+  "html_content": "...",
+  "external_id": "...",
+
+  // Kontakt (Ansprechpartner)
+  "contact_salutation": "Frau",      // Frau|Herr|""
+  "contact_title": "Dr.",            // Dr.|Prof.|Prof. Dr.|""
+  "contact_first_name": "...",
+  "contact_last_name": "...",
+  "contact_email": "...",
+  "contact_street": "...",
+  "contact_street_nr": "...",
+  "contact_plz": "...",
+  "contact_city": "...",
+
+  // Bewerbungsdaten
+  "job_name_personalized": "...",    // personalisierte Berufsbezeichnung für Anschreiben
+  "company_floskel": "...",          // z.B. "bei der XYZ GmbH"
+  "application_date": "2026-06-10", // ISO-Datum YYYY-MM-DD
+  "bewerbungstext": "..."            // Freitext Anschreiben
+}</pre>
+        </div>
+        <div class="bg-blue-50 border border-blue-200 rounded p-3 text-xs text-blue-800">
+          <strong>Tipp für automatische Tools:</strong> Sende nur die Felder die geändert werden sollen.
+          Ein PATCH mit nur <code class="bg-blue-100 px-1 rounded">{"bewerbungstext": "...", "application_date": "2026-06-10"}</code>
+          ändert ausschließlich diese beiden Felder.
+        </div>
+      </div>
+    </div>
+
+    {# DELETE /api/v1/jobs/{id} #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('DELETE') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs/<span class="text-blue-600">{id}</span></code>
+        <span class="text-xs text-slate-500 ml-2">Stelle löschen</span>
+      </div>
+      <div class="p-5">
+        <p class="text-xs text-slate-600">Löscht die Stelle und alle zugehörigen Tags und Verlaufseinträge. Gibt HTTP 204 (kein Body) zurück.</p>
+      </div>
+    </div>
+
+    {# GET /api/v1/jobs/{id}/history #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('GET') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs/<span class="text-blue-600">{id}</span>/history</code>
+        <span class="text-xs text-slate-500 ml-2">Änderungsverlauf abrufen</span>
+      </div>
+      <div class="p-5">
+        <p class="text-xs text-slate-600">Array aller Feldänderungen: <code class="bg-slate-100 px-1 rounded">field</code>, <code class="bg-slate-100 px-1 rounded">old_value</code>, <code class="bg-slate-100 px-1 rounded">new_value</code>, <code class="bg-slate-100 px-1 rounded">changed_at</code>.</p>
+      </div>
+    </div>
+
+    {# POST /api/v1/jobs/{id}/check-url #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('POST') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs/<span class="text-blue-600">{id}</span>/check-url</code>
+        <span class="text-xs text-slate-500 ml-2">URL-Prüfung auslösen</span>
+      </div>
+      <div class="p-5">
+        <p class="text-xs text-slate-600">Prüft die hinterlegte Monitoring-URL sofort. Setzt Status auf <code class="bg-slate-100 px-1 rounded">closed</code> bei HTTP 404/410 oder fehlendem Keyword. Kein Request-Body nötig.</p>
+      </div>
+    </div>
+
+    {# GET /api/v1/jobs/stats #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('GET') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs/stats</code>
+        <span class="text-xs text-slate-500 ml-2">Statistiken</span>
+        <a href="/api/v1/jobs/stats" target="_blank" class="ml-auto text-xs text-blue-600 hover:underline">Ausprobieren ↗</a>
+      </div>
+      <div class="p-5">
+        <p class="text-xs text-slate-600">Anzahl je Status, Top-20-Tags, Gesamtzahl, 5 neueste Stellen.</p>
+      </div>
+    </div>
+
+    {# GET /api/v1/jobs/tags #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('GET') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/jobs/tags</code>
+        <span class="text-xs text-slate-500 ml-2">Alle Tags</span>
+        <a href="/api/v1/jobs/tags" target="_blank" class="ml-auto text-xs text-blue-600 hover:underline">Ausprobieren ↗</a>
+      </div>
+      <div class="p-5">
+        <p class="text-xs text-slate-600">Array aller Tags mit Häufigkeit: <code class="bg-slate-100 px-1 rounded">[{"tag": "python", "count": 12}, ...]</code></p>
+      </div>
+    </div>
+
+  </div>{# end jobs section #}
+
+  {# ══════════════════════ SEARCHES SECTION ══════════════════════ #}
+  <div x-show="section === 'searches'" x-cloak class="space-y-4">
+
+    <p class="text-xs text-slate-500 bg-slate-50 border border-slate-200 rounded-lg px-4 py-3">
+      Verwaltung der automatischen Suchkonfigurationen (Arbeitsagentur-API-Suchen).
+      Basis: <code class="font-mono bg-slate-100 px-1 rounded">{{ base_url }}/api/v1/searches</code>
+    </p>
+
+    {# GET /api/v1/searches #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('GET') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/searches</code>
+        <span class="text-xs text-slate-500 ml-2">Alle Suchkonfigurationen</span>
+        <a href="/api/v1/searches" target="_blank" class="ml-auto text-xs text-blue-600 hover:underline">Ausprobieren ↗</a>
+      </div>
+      <div class="p-5"><p class="text-xs text-slate-600">Array aller gespeicherten Suchkonfigurationen inkl. tags und match_words als Arrays.</p></div>
+    </div>
+
+    {# POST /api/v1/searches #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('POST') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/searches</code>
+        <span class="text-xs text-slate-500 ml-2">Suchkonfiguration anlegen</span>
+      </div>
+      <div class="p-5 space-y-3">
+        <div class="bg-slate-900 rounded-lg p-4 text-xs font-mono text-green-300 overflow-auto">
+<pre>{
+  "name": "Python Jobs München",   // required
+  "keywords": "Python Entwickler", // required
+  "location": "München",
+  "radius": 30,                    // km, default 30
+  "angebotsart": 1,                // 1=Arbeit, 4=Ausbildung, 34=Praktikum
+  "arbeitszeit": "vz",             // vz=Vollzeit, tz=Teilzeit (optional)
+  "tags": ["python", "backend"],   // automatisch zu neuen Stellen hinzugefügt
+  "match_words": ["Python"],       // Stelle wird nur gespeichert wenn ein Wort im Titel vorkommt
+  "poll_interval": 3600,           // Sekunden zwischen Polls (für Info, global konfigurierbar)
+  "active": true
+}</pre>
+        </div>
+      </div>
+    </div>
+
+    {# GET /api/v1/searches/{id} #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('GET') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/searches/<span class="text-blue-600">{id}</span></code>
+        <span class="text-xs text-slate-500 ml-2">Einzelne Suchkonfiguration</span>
+      </div>
+      <div class="p-5"><p class="text-xs text-slate-600">Gibt eine Suchkonfiguration zurück. Enthält auch <code class="bg-slate-100 px-1 rounded">last_polled_at</code> und <code class="bg-slate-100 px-1 rounded">total_found</code>.</p></div>
+    </div>
+
+    {# PATCH /api/v1/searches/{id} #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('PATCH') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/searches/<span class="text-blue-600">{id}</span></code>
+        <span class="text-xs text-slate-500 ml-2">Suchkonfiguration aktualisieren</span>
+      </div>
+      <div class="p-5"><p class="text-xs text-slate-600">Partielles Update. Felder: name, keywords, location, radius, tags, match_words, active, poll_interval, angebotsart, arbeitszeit.</p></div>
+    </div>
+
+    {# DELETE /api/v1/searches/{id} #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('DELETE') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/searches/<span class="text-blue-600">{id}</span></code>
+        <span class="text-xs text-slate-500 ml-2">Suchkonfiguration löschen</span>
+      </div>
+      <div class="p-5"><p class="text-xs text-slate-600">Löscht die Suchkonfiguration. HTTP 204 (kein Body). Gefundene Stellen bleiben erhalten.</p></div>
+    </div>
+
+    {# POST /api/v1/searches/{id}/poll #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('POST') }}
+        <code class="text-sm font-mono text-slate-800">/api/v1/searches/<span class="text-blue-600">{id}</span>/poll</code>
+        <span class="text-xs text-slate-500 ml-2">Sofortiger Poll auslösen</span>
+      </div>
+      <div class="p-5">
+        <p class="text-xs text-slate-600 mb-2">Startet einen Arbeitsagentur-Suchlauf sofort. Gibt zurück: <code class="bg-slate-100 px-1 rounded">{"new": 3, "total": 150, "filtered": 42}</code></p>
+        <p class="text-xs text-slate-500">Kein Request-Body nötig.</p>
+      </div>
+    </div>
+
+  </div>{# end searches section #}
+
+  {# ══════════════════════ IMPORT SECTION ══════════════════════ #}
+  <div x-show="section === 'import'" x-cloak class="space-y-4">
+
+    <p class="text-xs text-slate-500 rounded-lg px-4 py-3" style="background:#162032; border:1px solid #334155;">
+      Web-Endpunkte zum Importieren von Stellen via JSON — entweder als eingefügten Text oder als hochgeladene Datei.
+      Erreichbar unter <code class="font-mono px-1 rounded" style="background:#1e293b;">/import</code> (Browser) oder direkt per POST.
+      <strong>Authentifizierung:</strong> Session-Cookie (eingeloggt sein).
+    </p>
+
+    {# POST /import — paste #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('POST') }}
+        <code class="text-sm font-mono text-slate-800">/import</code>
+        <span class="text-xs text-slate-500 ml-2">Stelle aus eingefügtem JSON anlegen</span>
+        <a href="/import" class="ml-auto text-xs text-blue-600 hover:underline">Zur Import-Seite ↗</a>
+      </div>
+      <div class="p-5 space-y-3">
+        <p class="text-xs text-slate-600">
+          Legt eine neue Stelle anhand eines JSON-Texts an und leitet direkt auf die neue Stelle weiter.
+          Content-Type: <code class="bg-slate-100 px-1 rounded">application/x-www-form-urlencoded</code>
+        </p>
+        <table class="w-full text-xs">
+          <thead><tr class="border-b border-slate-100">
+            <th class="text-left py-1.5 pr-4 font-semibold text-slate-500 w-36">Formularfeld</th>
+            <th class="text-left py-1.5 font-semibold text-slate-500">Beschreibung</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-50">
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">import_mode</td><td class="py-1.5 text-slate-600">Muss <code>paste</code> sein</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">json_text</td><td class="py-1.5 text-slate-600">JSON-String mit den Stellendaten (mind. <code>title</code> erforderlich)</td></tr>
+          </tbody>
+        </table>
+        <div class="rounded-lg p-4 text-xs font-mono overflow-auto" style="background:#0f172a; color:#4ade80;">
+<pre>curl -b "bwdb_session=..." -X POST {{ base_url }}/import \
+  -d "import_mode=paste" \
+  --data-urlencode 'json_text={"title":"Backend Dev","company":"ABC GmbH","status":"new"}'</pre>
+        </div>
+      </div>
+    </div>
+
+    {# POST /import — file upload #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="flex items-center gap-3 px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        {{ badge('POST') }}
+        <code class="text-sm font-mono text-slate-800">/import</code>
+        <span class="text-xs text-slate-500 ml-2">Stelle aus JSON-Datei anlegen</span>
+      </div>
+      <div class="p-5 space-y-3">
+        <p class="text-xs text-slate-600">
+          Wie oben, aber als Datei-Upload.
+          Content-Type: <code class="bg-slate-100 px-1 rounded">multipart/form-data</code>
+        </p>
+        <table class="w-full text-xs">
+          <thead><tr class="border-b border-slate-100">
+            <th class="text-left py-1.5 pr-4 font-semibold text-slate-500 w-36">Formularfeld</th>
+            <th class="text-left py-1.5 font-semibold text-slate-500">Beschreibung</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-50">
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">import_mode</td><td class="py-1.5 text-slate-600">Muss <code>file</code> sein</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">json_file</td><td class="py-1.5 text-slate-600">.json-Datei (max. 1 MB, UTF-8)</td></tr>
+          </tbody>
+        </table>
+        <div class="rounded-lg p-4 text-xs font-mono overflow-auto" style="background:#0f172a; color:#4ade80;">
+<pre>curl -b "bwdb_session=..." -X POST {{ base_url }}/import \
+  -F "import_mode=file" \
+  -F "json_file=@stelle.json"</pre>
+        </div>
+      </div>
+    </div>
+
+    {# JSON format #}
+    <div class="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
+      <div class="px-5 py-3.5 border-b border-slate-100 bg-slate-50">
+        <span class="text-sm font-semibold text-slate-700">JSON-Format</span>
+        <span class="text-xs text-slate-500 ml-2">Felder des Import-Objekts</span>
+      </div>
+      <div class="p-5 space-y-3">
+        <p class="text-xs text-slate-600">
+          Pflichtfeld: <code class="bg-slate-100 px-1 rounded">title</code> — alle anderen Felder sind optional.
+          Unbekannte Felder werden ignoriert. Fehlende Felder bleiben leer/null.
+        </p>
+        <table class="w-full text-xs">
+          <thead><tr class="border-b border-slate-100">
+            <th class="text-left py-1.5 pr-4 font-semibold text-slate-500">Feld</th>
+            <th class="text-left py-1.5 font-semibold text-slate-500">Beschreibung</th>
+          </tr></thead>
+          <tbody class="divide-y divide-slate-50">
+            <tr class="bg-slate-50"><td colspan="2" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Basis</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-blue-700">title <span class="text-red-500">*</span></td><td class="py-1.5 text-slate-600">Berufsbezeichnung (Pflicht)</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-slate-700">company, location, job_type, salary, status, expires_at</td><td class="py-1.5 text-slate-600">Basisdaten</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-slate-700">url, check_url, check_keyword</td><td class="py-1.5 text-slate-600">Links &amp; Monitoring</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-slate-700">description, requirements, notes</td><td class="py-1.5 text-slate-600">Textinhalte</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-slate-700">tags</td><td class="py-1.5 text-slate-600">Kommagetrennt als String: <code>"python, backend"</code></td></tr>
+            <tr class="bg-slate-50"><td colspan="2" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Kontakt</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-slate-700">contact_salutation, contact_title, contact_first_name, contact_last_name, contact_email</td><td class="py-1.5 text-slate-600">Ansprechpartner</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-slate-700">contact_street, contact_street_nr, contact_plz, contact_city</td><td class="py-1.5 text-slate-600">Adresse</td></tr>
+            <tr class="bg-slate-50"><td colspan="2" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Bewerbung</td></tr>
+            <tr><td class="py-1.5 pr-4 font-mono text-slate-700">job_name_personalized, company_floskel, application_date, bewerbungstext</td><td class="py-1.5 text-slate-600">Anschreiben-Daten</td></tr>
+          </tbody>
+        </table>
+        <div class="rounded-lg p-4 text-xs font-mono overflow-auto" style="background:#0f172a; color:#4ade80;">
+<pre>{
+  "title": "Einkäufer für Bauartikel (m/w/d)",
+  "company": "ABC GmbH",
+  "location": "München",
+  "status": "new",
+  "job_type": "Vollzeit",
+  "url": "https://abc-gmbh.de/jobs/42",
+  "description": "Wir suchen...",
+  "contact_salutation": "Frau",
+  "contact_first_name": "Maria",
+  "contact_last_name": "Mustermann",
+  "contact_email": "bewerbung@abc-gmbh.de",
+  "job_name_personalized": "Einkäufer für Bauartikel",
+  "company_floskel": "bei der ABC GmbH"
+}</pre>
+        </div>
+        <p class="text-xs text-slate-500">
+          Antwort bei Erfolg: HTTP 303 Redirect auf <code class="bg-slate-100 px-1 rounded">/jobs/{neue_id}</code>
+          — d.h. Browser/curl mit <code>-L</code> landet direkt auf der neuen Stelle.
+        </p>
+      </div>
+    </div>
+
+  </div>{# end import section #}
+
+  {# ══════════════════════ FIELDS SECTION ══════════════════════ #}
+  <div x-show="section === 'fields'" x-cloak class="space-y-4">
+
+    <div class="bg-white border border-slate-200 rounded-lg p-5 shadow-sm">
+      <h2 class="font-semibold text-slate-700 mb-4">Alle Felder eines Job-Objekts</h2>
+      <table class="w-full text-xs">
+        <thead><tr class="border-b border-slate-200">
+          <th class="text-left py-2 pr-4 font-semibold text-slate-500 w-48">Feld</th>
+          <th class="text-left py-2 pr-4 font-semibold text-slate-500 w-20">Typ</th>
+          <th class="text-left py-2 font-semibold text-slate-500">Beschreibung</th>
+        </tr></thead>
+        <tbody class="divide-y divide-slate-50">
+          {# System #}
+          <tr class="bg-slate-50"><td colspan="3" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">System</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">id</td><td class="py-1.5 pr-4 text-slate-500">integer</td><td class="py-1.5 text-slate-600">Interne ID (nur lesbar)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">source</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600"><code>manual</code> oder <code>arbeitsagentur</code></td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">external_id</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Referenznummer der Quelle</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">created_at</td><td class="py-1.5 pr-4 text-slate-500">ISO 8601</td><td class="py-1.5 text-slate-600">Zeitpunkt der Erfassung (UTC)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">updated_at</td><td class="py-1.5 pr-4 text-slate-500">ISO 8601</td><td class="py-1.5 text-slate-600">Letztes Update (UTC)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">last_changed_at</td><td class="py-1.5 pr-4 text-slate-500">ISO 8601</td><td class="py-1.5 text-slate-600">Letztes fachliches Update (Status, Felder)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">last_checked_at</td><td class="py-1.5 pr-4 text-slate-500">ISO 8601</td><td class="py-1.5 text-slate-600">Letzte URL-Prüfung</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">first_seen_at</td><td class="py-1.5 pr-4 text-slate-500">ISO 8601</td><td class="py-1.5 text-slate-600">Erstmalig gesehen (= created_at bei manuellen)</td></tr>
+
+          {# Basisdaten #}
+          <tr class="bg-slate-50"><td colspan="3" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Basisdaten</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">title</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Berufsbezeichnung (Pflicht)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">company</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Unternehmen</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">location</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Standort</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">job_type</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Beschäftigungsart, z.B. Vollzeit, Remote</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">salary</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Gehaltsangabe als Freitext</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">expires_at</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Eintrittsdatum / Frist</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">status</td><td class="py-1.5 pr-4 text-slate-500">enum</td><td class="py-1.5 text-slate-600">new · reviewing · applied · interview · offer · accepted · rejected · closed · irrelevant</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">tags</td><td class="py-1.5 pr-4 text-slate-500">string[]</td><td class="py-1.5 text-slate-600">Array von Tags</td></tr>
+
+          {# Inhalte #}
+          <tr class="bg-slate-50"><td colspan="3" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Inhalte</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">description</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Stellenbeschreibung (aus API oder manuell)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">requirements</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Anforderungen / Qualifikationen</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">notes</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Persönliche Notizen</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">html_content</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Rohes HTML der Stellenseite</td></tr>
+
+          {# Monitoring #}
+          <tr class="bg-slate-50"><td colspan="3" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Links &amp; Monitoring</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">url</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Bewerbungs-URL ("Zum Angebot"-Link)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">check_url</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Monitoring-URL (überschreibt url für Prüfungen)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">check_keyword</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Muss auf der check_url vorkommen — sonst → closed</td></tr>
+
+          {# Kontakt #}
+          <tr class="bg-slate-50"><td colspan="3" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Ansprechpartner</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_salutation</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Anrede: Frau · Herr · (leer)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_title</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Titel: Dr. · Prof. · Prof. Dr. · (leer)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_first_name</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Vorname</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_last_name</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Nachname</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_email</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">E-Mail-Adresse</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_street</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Straße</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_street_nr</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Hausnummer</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_plz</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Postleitzahl</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">contact_city</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Stadt</td></tr>
+
+          {# Bewerbung #}
+          <tr class="bg-slate-50"><td colspan="3" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">Bewerbungsdaten</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">job_name_personalized</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Personalisierte Berufsbezeichnung für Anschreiben</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">company_floskel</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Unternehmensformulierung, z.B. "bei der XYZ GmbH"</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">application_date</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Bewerbungsdatum (YYYY-MM-DD)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">bewerbungstext</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Freitext des Anschreibens</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="bg-blue-50 border border-blue-200 rounded-lg p-4 text-xs text-blue-800 space-y-1">
+      <p><strong>Null-Handling:</strong> Alle optionalen Felder sind <code class="bg-blue-100 px-1 rounded">null</code> wenn nicht gesetzt. Beim PATCH werden Felder die auf <code class="bg-blue-100 px-1 rounded">null</code> gesetzt werden auf null/leer gesetzt.</p>
+      <p><strong>Datumsformat:</strong> Zeitstempel (<code class="bg-blue-100 px-1 rounded">created_at</code> etc.) sind ISO 8601 mit UTC-Timezone. <code class="bg-blue-100 px-1 rounded">application_date</code> und <code class="bg-blue-100 px-1 rounded">expires_at</code> sind freie Strings.</p>
+    </div>
+
+  </div>{# end fields section #}
+
+  {# ══════════════════════ EXCEL SECTION ══════════════════════ #}
+  <div x-show="section === 'excel'" x-cloak class="space-y-4">
+
+    <div class="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+      <h2 class="font-semibold text-slate-700 mb-1">Excel – Power Query Einrichtung</h2>
+      <p class="text-sm text-slate-600 mb-5">
+        Mit Power Query kann Excel alle Stellen-Daten direkt aus der API laden und auf Knopfdruck aktualisieren.
+      </p>
+
+      <ol class="space-y-4">
+        <li class="flex gap-4">
+          <span class="shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center">1</span>
+          <div class="pt-0.5">
+            <p class="text-sm font-medium text-slate-700">Excel öffnen → Reiter "Daten"</p>
+            <p class="text-xs text-slate-500 mt-0.5">Klicke auf <strong>Daten abrufen</strong> → <strong>Aus anderen Quellen</strong> → <strong>Aus dem Web</strong></p>
+          </div>
+        </li>
+        <li class="flex gap-4">
+          <span class="shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center">2</span>
+          <div class="pt-0.5 w-full">
+            <p class="text-sm font-medium text-slate-700">URL eingeben</p>
+            <div class="mt-1 bg-slate-900 rounded p-2 font-mono text-xs text-green-400 flex items-center justify-between gap-3">
+              <span id="excel-url">{{ base_url }}/api/v1/jobs</span>
+              <button onclick="navigator.clipboard.writeText(document.getElementById('excel-url').innerText)"
+                      class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-300 px-2 py-1 rounded shrink-0">
+                Kopieren
+              </button>
+            </div>
+            <p class="text-xs text-slate-400 mt-1">Tipp: Filter anhängen, z.B. <code>?status=applied,interview,offer</code> für aktive Bewerbungen</p>
+          </div>
+        </li>
+        <li class="flex gap-4">
+          <span class="shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center">3</span>
+          <div class="pt-0.5">
+            <p class="text-sm font-medium text-slate-700">Power Query-Editor: Liste in Tabelle umwandeln</p>
+            <p class="text-xs text-slate-500 mt-0.5">Es erscheint eine <em>List</em>. Klicke auf <strong>In Tabelle konvertieren</strong> (oben links) → <strong>OK</strong>. Dann auf den Spalten-Expand-Button <strong>⇔</strong> → gewünschte Felder auswählen → <strong>OK</strong>.</p>
+          </div>
+        </li>
+        <li class="flex gap-4">
+          <span class="shrink-0 w-7 h-7 rounded-full bg-blue-600 text-white text-sm font-bold flex items-center justify-center">4</span>
+          <div class="pt-0.5">
+            <p class="text-sm font-medium text-slate-700">Schließen &amp; laden</p>
+            <p class="text-xs text-slate-500 mt-0.5">Klicke auf <strong>Schließen &amp; laden</strong>. Die Daten erscheinen als Tabelle.</p>
+          </div>
+        </li>
+        <li class="flex gap-4">
+          <span class="shrink-0 w-7 h-7 rounded-full bg-green-600 text-white text-sm font-bold flex items-center justify-center">✓</span>
+          <div class="pt-0.5">
+            <p class="text-sm font-medium text-slate-700">Daten aktualisieren</p>
+            <p class="text-xs text-slate-500 mt-0.5"><strong>Daten → Alle aktualisieren</strong> oder Rechtsklick auf die Tabelle → <strong>Aktualisieren</strong>.</p>
+          </div>
+        </li>
+      </ol>
+
+      <div class="mt-5 p-3 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-800">
+        <strong>Hinweis:</strong> BewerbungsDB muss laufen während Excel lädt. Starte mit
+        <code class="bg-amber-100 px-1 rounded">python run.py</code> bevor du in Excel aktualisierst.
+      </div>
+    </div>
+
+    <div class="bg-white rounded-lg border border-slate-200 p-5 shadow-sm">
+      <h2 class="font-semibold text-slate-700 mb-3">Nützliche API-URLs für Excel</h2>
+      <div class="space-y-2">
+        {% for path, label in [
+          ('/api/v1/jobs', 'Alle Stellen'),
+          ('/api/v1/jobs?status=new,reviewing', 'Neu &amp; In Prüfung'),
+          ('/api/v1/jobs?status=applied,interview,offer', 'Aktive Bewerbungen'),
+          ('/api/v1/jobs?sort=changed_desc&limit=50', 'Zuletzt geändert (50)'),
+          ('/api/v1/jobs/stats', 'Statistiken (Status-Zähler)'),
+          ('/api/v1/searches', 'Suchkonfigurationen'),
+        ] %}
+        <div class="flex items-center gap-3 p-2 rounded-lg hover:bg-slate-50">
+          <span class="text-xs text-slate-500 w-52 shrink-0">{{ label }}</span>
+          <a href="{{ path }}" target="_blank"
+             class="font-mono text-xs text-blue-600 hover:underline flex-1 break-all">
+            {{ base_url }}{{ path }}
+          </a>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+
+  </div>{# end excel section #}
+
+</div>
+{% endblock %}

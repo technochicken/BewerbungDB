@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="de" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}BewerbungsDB{% endblock %}</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://unpkg.com/alpinejs@3.x.x/dist/cdn.min.js" defer></script>
+  <style>
+    [x-cloak] { display: none !important; }
+
+    /* ── Dark theme base ───────────────────────────────────────────────────── */
+    html, body { background-color: #0f172a !important; color: #e2e8f0 !important; }
+
+    /* Background overrides */
+    .bg-white       { background-color: #1e293b !important; }
+    .bg-slate-50    { background-color: #162032 !important; }
+    .bg-slate-100   { background-color: #1e293b !important; }
+    .bg-slate-200   { background-color: #334155 !important; }
+
+    /* Text overrides */
+    .text-slate-900, .text-slate-800 { color: #f1f5f9 !important; }
+    .text-slate-700 { color: #e2e8f0 !important; }
+    .text-slate-600 { color: #cbd5e1 !important; }
+    .text-slate-500 { color: #94a3b8 !important; }
+    .text-slate-400 { color: #64748b !important; }
+    .text-green-700 { color: #4ade80 !important; }
+
+    /* Border overrides */
+    .border-slate-100 { border-color: #1e293b !important; }
+    .border-slate-200 { border-color: #334155 !important; }
+    .border-slate-300 { border-color: #475569 !important; }
+    .divide-slate-100 > :not(:first-child) { border-color: #334155 !important; }
+
+    /* Hover overrides */
+    .hover\:bg-slate-50:hover  { background-color: #1e3a5f22 !important; }
+    .hover\:bg-blue-50:hover   { background-color: #1e3a5f !important; }
+    .hover\:bg-slate-800:hover { background-color: #1e293b !important; }
+    .hover\:bg-red-50:hover    { background-color: #2d1515 !important; }
+
+    /* Tag/badge colors */
+    .bg-blue-50   { background-color: #1e3a5f !important; }
+    .text-blue-700{ color: #93c5fd !important; }
+    .hover\:bg-blue-100:hover { background-color: #1e3a5f !important; }
+
+    /* Notification backgrounds */
+    .bg-green-50  { background-color: #052e16 !important; }
+    .bg-red-50    { background-color: #450a0a !important; }
+    .bg-amber-50  { background-color: #2d1e00 !important; }
+    .text-green-800 { color: #4ade80 !important; }
+    .text-red-700   { color: #f87171 !important; }
+    .text-amber-700 { color: #fbbf24 !important; }
+    .text-amber-900 { color: #fde68a !important; }
+    .border-green-200 { border-color: #14532d !important; }
+    .border-red-200   { border-color: #7f1d1d !important; }
+    .border-amber-200 { border-color: #78350f !important; }
+
+    /* Log icon backgrounds */
+    .bg-blue-100  { background-color: #1e3a5f !important; }
+    .bg-gray-100  { background-color: #1e293b !important; }
+    .bg-green-100 { background-color: #052e16 !important; }
+    .bg-red-100   { background-color: #450a0a !important; }
+    .bg-amber-100 { background-color: #2d1e00 !important; }
+    .text-blue-600  { color: #60a5fa !important; }
+    .text-blue-500  { color: #60a5fa !important; }
+    .text-red-500   { color: #f87171 !important; }
+    .text-red-400   { color: #f87171 !important; }
+    .text-green-600 { color: #4ade80 !important; }
+    .text-amber-500 { color: #fbbf24 !important; }
+    .text-gray-500  { color: #94a3b8 !important; }
+
+    /* Table */
+    .bg-slate-50.sticky, thead .bg-slate-50 { background-color: #162032 !important; }
+
+    /* Code blocks */
+    pre, code { background-color: #162032 !important; color: #e2e8f0 !important; }
+    .bg-slate-800 { background-color: #0f172a !important; }
+    .bg-slate-900 { background-color: #020617 !important; }
+
+    /* Badges in detail view */
+    .bg-slate-100.px-1\.5 { background-color: #334155 !important; color: #cbd5e1 !important; }
+
+    /* Status badge colors — dark variants */
+    .status-new        { background:#1e3a5f; color:#93c5fd; }
+    .status-reviewing  { background:#3d2e00; color:#fcd34d; }
+    .status-applied    { background:#3b1f63; color:#c084fc; }
+    .status-interview  { background:#1e2d6b; color:#818cf8; }
+    .status-offer      { background:#064e4a; color:#34d399; }
+    .status-accepted   { background:#052e16; color:#4ade80; }
+    .status-rejected   { background:#450a0a; color:#fca5a5; }
+    .status-closed     { background:#162032; color:#64748b; }
+    .status-irrelevant { background:#0f172a; color:#475569; }
+
+    /* ── Component styles ─────────────────────────────────────────────────── */
+    .field-label {
+      display: block; font-size: 0.875rem; font-weight: 500;
+      color: #cbd5e1; margin-bottom: 0.25rem;
+    }
+    .field-hint {
+      display: block; font-size: 0.75rem; color: #64748b; margin-top: 0.25rem;
+    }
+    .field-input {
+      width: 100%; border: 1px solid #475569; border-radius: 0.375rem;
+      padding: 0.5rem 0.75rem; font-size: 0.875rem; line-height: 1.5rem;
+      background: #1e293b; color: #e2e8f0;
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .field-input:focus {
+      outline: none; border-color: #3b82f6;
+      box-shadow: 0 0 0 3px rgba(59,130,246,.25);
+    }
+    textarea.field-input { resize: vertical; font-family: inherit; }
+    select.field-input   { cursor: pointer; }
+
+    /* Native form elements */
+    input, textarea, select {
+      background-color: #1e293b !important;
+      color: #e2e8f0 !important;
+      border-color: #475569 !important;
+    }
+    input::placeholder, textarea::placeholder { color: #475569 !important; }
+    select option { background-color: #1e293b; color: #e2e8f0; }
+
+    .tab-btn {
+      padding: 0.625rem 1rem; font-size: 0.875rem; font-weight: 500;
+      border-bottom: 2px solid transparent; white-space: nowrap;
+      color: #64748b; transition: color .15s, border-color .15s; cursor: pointer;
+    }
+    .tab-btn:hover { color: #e2e8f0; }
+    .tab-btn.active { border-bottom-color: #3b82f6; color: #60a5fa; }
+
+    .btn-primary   { background:#2563eb; color:white; font-size:.875rem; font-weight:500; padding:.5rem 1.25rem; border-radius:.375rem; transition:background .15s; border:none; cursor:pointer; }
+    .btn-primary:hover { background:#1d4ed8; }
+    .btn-secondary { background:#1e293b; color:#cbd5e1; font-size:.875rem; font-weight:500; padding:.5rem 1.25rem; border-radius:.375rem; border:1px solid #475569; transition:background .15s; cursor:pointer; }
+    .btn-secondary:hover { background:#334155; }
+    .btn-danger    { background:#1e293b; color:#f87171; font-size:.875rem; font-weight:500; padding:.5rem 1.25rem; border-radius:.375rem; border:1px solid #7f1d1d; transition:background .15s; cursor:pointer; }
+    .btn-danger:hover { background:#2d1515; }
+
+    /* ── Misc ─────────────────────────────────────────────────────────────── */
+    hr, .border-t, .border-b { border-color: #334155 !important; }
+    .shadow-sm { box-shadow: 0 1px 2px 0 rgba(0,0,0,.4) !important; }
+    .shadow-md { box-shadow: 0 4px 6px -1px rgba(0,0,0,.5) !important; }
+    .shadow-lg { box-shadow: 0 10px 15px -3px rgba(0,0,0,.5) !important; }
+    a.text-blue-600, a.text-blue-500 { color: #60a5fa !important; }
+    a.hover\:text-white:hover { color: white !important; }
+    .line-through.text-red-500 { color: #f87171 !important; }
+    .text-green-700.font-semibold { color: #4ade80 !important; }
+
+    /* Status select in header */
+    select.border-slate-300 { background-color: #1e293b !important; color: #e2e8f0 !important; border-color: #475569 !important; }
+  </style>
+</head>
+<body class="h-full flex flex-col">
+
+<nav class="bg-slate-900 text-white shadow-lg shrink-0">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6">
+    <div class="flex items-center justify-between h-14">
+      <div class="flex items-center gap-1">
+        <a href="/" class="font-bold text-base tracking-tight text-white px-2 py-1 rounded hover:bg-slate-800">
+          BewerbungsDB
+        </a>
+        <span class="text-slate-600 mx-1">|</span>
+        <a href="/jobs"
+           class="px-3 py-1.5 rounded text-sm font-medium transition-colors
+                  {% if request.url.path.startswith('/jobs') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
+          Stellen
+        </a>
+        <a href="/searches"
+           class="px-3 py-1.5 rounded text-sm font-medium transition-colors
+                  {% if request.url.path.startswith('/searches') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
+          Suchen
+        </a>
+        <a href="/alerts"
+           class="px-3 py-1.5 rounded text-sm font-medium transition-colors
+                  {% if request.url.path.startswith('/alerts') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
+          Alerts
+        </a>
+        <a href="/log"
+           class="px-3 py-1.5 rounded text-sm font-medium transition-colors
+                  {% if request.url.path.startswith('/log') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
+          Log
+        </a>
+        <a href="/import"
+           class="px-3 py-1.5 rounded text-sm font-medium transition-colors
+                  {% if request.url.path.startswith('/import') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
+          Import
+        </a>
+        <a href="/api-docs"
+           class="px-3 py-1.5 rounded text-sm font-medium transition-colors
+                  {% if request.url.path.startswith('/api-docs') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
+          API / Excel
+        </a>
+        <a href="/settings"
+           class="px-3 py-1.5 rounded text-sm font-medium transition-colors
+                  {% if request.url.path.startswith('/settings') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
+          ⚙ Einstellungen
+        </a>
+      </div>
+      <div class="flex items-center gap-2">
+        <a href="/jobs/new"
+           class="bg-blue-600 hover:bg-blue-500 text-white text-sm font-medium px-3 py-1.5 rounded-md transition-colors">
+          + Neue Stelle
+        </a>
+        <form method="post" action="/logout">
+          <button type="submit"
+                  class="text-slate-400 hover:text-white text-sm px-2 py-1.5 rounded transition-colors"
+                  title="Abmelden">
+            ⏻
+          </button>
+        </form>
+      </div>
+    </div>
+  </div>
+</nav>
+
+<main class="flex-1 overflow-auto">
+  <div class="max-w-7xl mx-auto px-4 sm:px-6 py-6">
+    {% block content %}{% endblock %}
+  </div>
+</main>
+
+</body>
+</html>

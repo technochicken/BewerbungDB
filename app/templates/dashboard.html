@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Dashboard – BewerbungsDB{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+
+  <div class="flex items-center justify-between">
+    <h1 class="text-2xl font-bold text-slate-800">Dashboard</h1>
+    <span class="text-sm text-slate-500">{{ total }} Stellen gesamt &middot; {{ active_searches }} aktive Suchen</span>
+  </div>
+
+  {# Status overview grid #}
+  <div class="grid grid-cols-3 sm:grid-cols-4 lg:grid-cols-9 gap-3">
+    {% set status_labels = {
+      'new': 'Neu', 'reviewing': 'Prüfen', 'applied': 'Beworben',
+      'interview': 'Gespräch', 'offer': 'Angebot', 'accepted': 'Angenommen',
+      'rejected': 'Abgelehnt', 'closed': 'Geschlossen', 'irrelevant': 'Irrelevant'
+    } %}
+    {% for st, label in status_labels.items() %}
+    <a href="/jobs?status={{ st }}"
+       class="bg-white rounded-lg border border-slate-200 p-3 text-center hover:shadow-md transition-shadow">
+      <div class="text-2xl font-bold text-slate-800">{{ by_status.get(st, 0) }}</div>
+      <div class="text-xs text-slate-500 mt-0.5">{{ label }}</div>
+    </a>
+    {% endfor %}
+  </div>
+
+  {# Recent jobs #}
+  <div class="bg-white rounded-lg border border-slate-200">
+    <div class="px-5 py-3 border-b border-slate-100 flex items-center justify-between">
+      <h2 class="font-semibold text-slate-700">Zuletzt hinzugefügt</h2>
+      <a href="/jobs" class="text-sm text-blue-600 hover:underline">Alle anzeigen</a>
+    </div>
+    <ul class="divide-y divide-slate-100">
+      {% for job in recent %}
+      <li class="px-5 py-3 flex items-center gap-4 hover:bg-slate-50">
+        <div class="flex-1 min-w-0">
+          <a href="/jobs/{{ job.id }}" class="font-medium text-slate-800 hover:text-blue-600 truncate block">
+            {{ job.title }}
+          </a>
+          <div class="text-sm text-slate-500">{{ job.company or '—' }}</div>
+        </div>
+        <div class="flex items-center gap-2 shrink-0">
+          {% for tag in job.tags %}
+          <span class="px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-600">{{ tag }}</span>
+          {% endfor %}
+          <span class="px-2 py-0.5 rounded-full text-xs font-medium status-{{ job.status }}">
+            {{ status_labels.get(job.status, job.status) }}
+          </span>
+        </div>
+        <div class="text-xs text-slate-400 shrink-0 w-24 text-right">
+          {{ job.created_at[:10] if job.created_at else '' }}
+        </div>
+      </li>
+      {% else %}
+      <li class="px-5 py-8 text-center text-slate-400">
+        Noch keine Stellen. <a href="/jobs/new" class="text-blue-600 hover:underline">Jetzt hinzufügen</a>
+        oder eine <a href="/searches" class="text-blue-600 hover:underline">Suche einrichten</a>.
+      </li>
+      {% endfor %}
+    </ul>
+  </div>
+
+</div>
+{% endblock %}

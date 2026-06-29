@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Aktivitätslog – BewerbungsDB{% endblock %}
+
+{% block content %}
+{% set status_labels = {
+  'new': 'Neu', 'reviewing': 'Prüfen', 'applied': 'Beworben',
+  'interview': 'Gespräch', 'offer': 'Angebot', 'accepted': 'Angenommen',
+  'rejected': 'Abgelehnt', 'closed': 'Geschlossen', 'irrelevant': 'Irrelevant'
+} %}
+
+<div class="space-y-4 max-w-5xl">
+
+  <div class="flex flex-wrap items-center justify-between gap-3">
+    <div>
+      <h1 class="text-xl font-bold text-slate-800">Aktivitätslog</h1>
+      <p class="text-sm text-slate-500 mt-0.5">
+        Alle neuen Stellen und Statusänderungen in chronologischer Reihenfolge.
+      </p>
+    </div>
+
+    {# Filter tabs #}
+    <div class="flex gap-1">
+      <a href="/log"
+         class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors border
+                {% if not current_event %}bg-slate-800 text-white border-slate-800{% else %}bg-white border-slate-300 text-slate-600 hover:bg-slate-50{% endif %}">
+        Alle
+      </a>
+      <a href="/log?event=added"
+         class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors border
+                {% if current_event == 'added' %}bg-slate-800 text-white border-slate-800{% else %}bg-white border-slate-300 text-slate-600 hover:bg-slate-50{% endif %}">
+        Neu hinzugefügt
+      </a>
+      <a href="/log?event=status"
+         class="px-3 py-1.5 rounded-md text-sm font-medium transition-colors border
+                {% if current_event == 'status' %}bg-slate-800 text-white border-slate-800{% else %}bg-white border-slate-300 text-slate-600 hover:bg-slate-50{% endif %}">
+        Statusänderungen
+      </a>
+    </div>
+  </div>
+
+  {% if entries %}
+
+  {# Group entries by date #}
+  {% set ns = namespace(last_date='') %}
+  <div class="space-y-1">
+    {% for entry in entries %}
+    {% set entry_date = entry.changed_at[:10] if entry.changed_at else '' %}
+
+    {# Date separator #}
+    {% if entry_date != ns.last_date %}
+    {% set ns.last_date = entry_date %}
+    <div class="flex items-center gap-3 pt-3 pb-1 first:pt-0">
+      <span class="text-xs font-semibold text-slate-400 uppercase tracking-wide whitespace-nowrap">
+        {% if entry_date == today %}Heute
+        {% else %}{{ entry_date }}{% endif %}
+      </span>
+      <div class="flex-1 h-px bg-slate-200"></div>
+    </div>
+    {% endif %}
+
+    {# Log entry card #}
+    <div class="flex items-start gap-3 bg-white rounded-lg border border-slate-200 px-4 py-3 hover:border-slate-300 transition-colors">
+
+      {# Icon #}
+      {% if entry.field == '_added' %}
+      <span class="shrink-0 w-7 h-7 rounded-full bg-blue-100 text-blue-600 flex items-center justify-center text-sm font-bold mt-0.5"
+            title="Neu hinzugefügt">+</span>
+      {% elif entry.field == 'status' and entry.new_value == 'closed' %}
+      <span class="shrink-0 w-7 h-7 rounded-full bg-gray-100 text-gray-500 flex items-center justify-center text-sm mt-0.5"
+            title="Geschlossen">×</span>
+      {% elif entry.field == 'status' and entry.new_value in ('accepted', 'offer') %}
+      <span class="shrink-0 w-7 h-7 rounded-full bg-green-100 text-green-600 flex items-center justify-center text-sm mt-0.5"
+            title="Positiv">✓</span>
+      {% elif entry.field == 'status' and entry.new_value == 'rejected' %}
+      <span class="shrink-0 w-7 h-7 rounded-full bg-red-100 text-red-500 flex items-center justify-center text-sm mt-0.5"
+            title="Abgelehnt">✗</span>
+      {% else %}
+      <span class="shrink-0 w-7 h-7 rounded-full bg-amber-100 text-amber-600 flex items-center justify-center text-sm mt-0.5"
+            title="Statusänderung">↻</span>
+      {% endif %}
+
+      {# Content #}
+      <div class="flex-1 min-w-0">
+        <div class="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+          {% if entry.title %}
+          <a href="/jobs/{{ entry.job_id }}"
+             class="font-medium text-slate-800 hover:text-blue-600 transition-colors truncate">
+            {{ entry.title }}
+          </a>
+          {% else %}
+          <span class="font-medium text-slate-400 italic text-sm">(Stelle gelöscht)</span>
+          {% endif %}
+          {% if entry.company %}
+          <span class="text-sm text-slate-500">{{ entry.company }}</span>
+          {% endif %}
+        </div>
+
+        <div class="flex flex-wrap items-center gap-x-3 gap-y-0.5 mt-1 text-xs text-slate-500">
+          {% if entry.field == '_added' %}
+            <span class="font-medium text-blue-700">Neu hinzugefügt</span>
+            {% if entry.new_value %}
+            <span>Quelle: {{ entry.new_value }}</span>
+            {% endif %}
+          {% elif entry.field == 'status' %}
+            <span class="font-medium text-slate-600">Statusänderung</span>
+            <span class="flex items-center gap-1">
+              {% if entry.old_value %}
+              <span class="px-1.5 py-0.5 rounded status-{{ entry.old_value }}">
+                {{ status_labels.get(entry.old_value, entry.old_value) }}
+              </span>
+              <span>→</span>
+              {% endif %}
+              <span class="px-1.5 py-0.5 rounded status-{{ entry.new_value }}">
+                {{ status_labels.get(entry.new_value, entry.new_value) }}
+              </span>
+            </span>
+          {% endif %}
+        </div>
+      </div>
+
+      {# Timestamp #}
+      <span class="shrink-0 text-xs text-slate-400 mt-0.5 whitespace-nowrap">
+        {{ entry.changed_at[11:16] if entry.changed_at else '' }}
+      </span>
+
+    </div>
+    {% endfor %}
+  </div>
+
+  {% if entries|length >= limit %}
+  <div class="text-center pt-2">
+    <a href="/log?limit={{ limit + 200 }}{% if current_event %}&event={{ current_event }}{% endif %}"
+       class="text-sm text-blue-600 hover:underline">
+      Mehr anzeigen…
+    </a>
+  </div>
+  {% endif %}
+
+  {% else %}
+  <div class="bg-white rounded-lg border border-slate-200 py-16 text-center text-slate-400">
+    <p class="text-lg mb-2">Noch keine Einträge.</p>
+    <p class="text-sm">
+      Log-Einträge entstehen automatisch, sobald Stellen hinzugefügt oder
+      ihr Status geändert wird.
+    </p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}
