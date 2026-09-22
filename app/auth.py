@@ -384,7 +384,12 @@ def delete_webauthn_credential(cred_row_id: int) -> None:
 # opted in — they have their own dedicated management UI elsewhere.
 
 _SETTINGS_CREDENTIAL_KEYS = {"password_hash", "totp_secret", "totp_enabled", "webauthn_user_id", "mcp_token"}
-_SETTINGS_RESET_KEYS = {"claude_api_key", "user_gender"}
+_SETTINGS_RESET_KEYS = {
+    "claude_api_key", "claude_model",
+    "openai_api_key", "openai_model",
+    "ollama_base_url", "ollama_model",
+    "ai_provider", "user_gender",
+}
 
 
 def reset_settings_data() -> None:

@@ -2,7 +2,7 @@
 {% block title %}Einstellungen – BewerbungsDB{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl space-y-6" x-data="{ showClaudeKey: false }">
+<div class="max-w-2xl space-y-6">
 
   <h1 class="text-xl font-bold text-slate-200">Einstellungen</h1>
 
@@ -25,9 +25,9 @@
   <div class="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-2.5 rounded-lg">
     API-Key wurde aktualisiert.
   </div>
-  {% elif saved == 'claude' %}
+  {% elif saved == 'ai' %}
   <div class="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-2.5 rounded-lg">
-    Claude AI Einstellungen gespeichert.
+    KI-Einstellungen gespeichert.
   </div>
   {% elif saved == 'mcp' %}
   <div class="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-2.5 rounded-lg">
@@ -217,36 +217,110 @@
     </details>
   </div>
 
-  {# ── Claude AI ────────────────────────────────────────────────────────────── #}
-  <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-5 space-y-4">
+  {# ── KI-Anbieter (Auto-Parse) ─────────────────────────────────────────────── #}
+  <div id="ai-provider" class="bg-white rounded-lg border border-slate-200 shadow-sm p-5 space-y-4"
+       x-data="{ provider: '{{ ai_provider }}', showClaudeKey: false, showOpenaiKey: false }">
     <div>
-      <h2 class="font-semibold text-slate-700">Claude AI (Auto-Parse)</h2>
+      <h2 class="font-semibold text-slate-700">KI-Anbieter (Auto-Parse)</h2>
       <p class="text-xs text-slate-400 mt-0.5">
-        API-Key für den Auto-Parse-Button in Stellenangeboten.
-        Modell: <code class="bg-slate-100 px-1 rounded">claude-haiku-4-5</code>
+        Anbieter für den Auto-Parse-Button in Stellenangeboten. Modelle sind frei wählbar.
       </p>
     </div>
-    <form method="post" action="/settings/claude" class="space-y-4">
+
+    <div class="flex gap-2">
+      {% for key, meta in ai_providers.items() %}
+      <button type="button" @click="provider = '{{ key }}'"
+              class="text-xs px-3 py-1.5 rounded-lg border transition-colors"
+              :class="provider === '{{ key }}' ? 'border-blue-500 text-blue-300' : 'border-slate-600 text-slate-400 hover:text-slate-200'"
+              style="background:#162032;">
+        {{ meta.label }}
+      </button>
+      {% endfor %}
+    </div>
+
+    <form method="post" action="/settings/ai" class="space-y-4">
       <input type="hidden" name="csrf" value="{{ csrf_token }}">
-      <div>
-        <label class="field-label">Anthropic API-Key</label>
-        <div class="flex gap-2">
-          <input :type="showClaudeKey ? 'text' : 'password'"
-                 name="claude_api_key"
-                 value=""
-                 placeholder="{{ 'gespeichert — zum Ändern neuen Key eingeben' if claude_api_key_set else 'sk-ant-...' }}"
-                 autocomplete="off"
-                 class="field-input flex-1 font-mono text-xs">
-          <button type="button" @click="showClaudeKey = !showClaudeKey"
-                  class="btn-secondary text-xs shrink-0"
-                  x-text="showClaudeKey ? 'Verbergen' : 'Anzeigen'">
-          </button>
+      <input type="hidden" name="ai_provider" :value="provider">
+
+      {# Claude fields #}
+      <div x-show="provider === 'claude'" x-cloak class="space-y-4">
+        <div>
+          <label class="field-label">Anthropic API-Key</label>
+          <div class="flex gap-2">
+            <input :type="showClaudeKey ? 'text' : 'password'"
+                   name="claude_api_key" value="" autocomplete="off"
+                   placeholder="{{ 'gespeichert — zum Ändern neuen Key eingeben' if claude_api_key_set else 'sk-ant-...' }}"
+                   class="field-input flex-1 font-mono text-xs">
+            <button type="button" @click="showClaudeKey = !showClaudeKey"
+                    class="btn-secondary text-xs shrink-0"
+                    x-text="showClaudeKey ? 'Verbergen' : 'Anzeigen'"></button>
+          </div>
+          <span class="field-hint">
+            {% if claude_api_key_set %}Ein Key ist gespeichert und wird aus Sicherheitsgründen nicht angezeigt. Leer lassen, um ihn zu behalten.{% endif %}
+            Erhältlich unter <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" class="text-blue-500 hover:underline">console.anthropic.com</a>
+          </span>
         </div>
-        <span class="field-hint">
-          {% if claude_api_key_set %}Ein Key ist gespeichert und wird aus Sicherheitsgründen nicht angezeigt. Leer lassen, um ihn zu behalten.{% endif %}
-          Erhältlich unter <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" class="text-blue-500 hover:underline">console.anthropic.com</a>
-        </span>
+        <div>
+          <label class="field-label">Modell</label>
+          <input type="text" name="claude_model" list="claude-models" value="{{ claude_model }}"
+                 class="field-input font-mono text-xs">
+          <datalist id="claude-models">
+            {% for m in ai_providers.claude.model_suggestions %}<option value="{{ m }}">{% endfor %}
+          </datalist>
+        </div>
       </div>
+
+      {# OpenAI / ChatGPT fields #}
+      <div x-show="provider === 'openai'" x-cloak class="space-y-4">
+        <div>
+          <label class="field-label">OpenAI API-Key</label>
+          <div class="flex gap-2">
+            <input :type="showOpenaiKey ? 'text' : 'password'"
+                   name="openai_api_key" value="" autocomplete="off"
+                   placeholder="{{ 'gespeichert — zum Ändern neuen Key eingeben' if openai_api_key_set else 'sk-...' }}"
+                   class="field-input flex-1 font-mono text-xs">
+            <button type="button" @click="showOpenaiKey = !showOpenaiKey"
+                    class="btn-secondary text-xs shrink-0"
+                    x-text="showOpenaiKey ? 'Verbergen' : 'Anzeigen'"></button>
+          </div>
+          <span class="field-hint">
+            {% if openai_api_key_set %}Ein Key ist gespeichert und wird aus Sicherheitsgründen nicht angezeigt. Leer lassen, um ihn zu behalten.{% endif %}
+            Erhältlich unter <a href="https://platform.openai.com/api-keys" target="_blank" rel="noopener" class="text-blue-500 hover:underline">platform.openai.com</a>
+          </span>
+        </div>
+        <div>
+          <label class="field-label">Modell</label>
+          <input type="text" name="openai_model" list="openai-models" value="{{ openai_model }}"
+                 class="field-input font-mono text-xs">
+          <datalist id="openai-models">
+            {% for m in ai_providers.openai.model_suggestions %}<option value="{{ m }}">{% endfor %}
+          </datalist>
+        </div>
+      </div>
+
+      {# Ollama fields #}
+      <div x-show="provider === 'ollama'" x-cloak class="space-y-4">
+        <div>
+          <label class="field-label">Ollama-Server-URL</label>
+          <input type="text" name="ollama_base_url" value="{{ ollama_base_url }}"
+                 placeholder="http://localhost:11434" class="field-input font-mono text-xs">
+          <span class="field-hint">
+            Läuft BewerbungsDB selbst in Docker und Ollama auf dem Host, meist
+            <code class="bg-slate-100 px-1 rounded">http://host.docker.internal:11434</code> verwenden.
+            Kein API-Key nötig.
+          </span>
+        </div>
+        <div>
+          <label class="field-label">Modell</label>
+          <input type="text" name="ollama_model" list="ollama-models" value="{{ ollama_model }}"
+                 class="field-input font-mono text-xs">
+          <datalist id="ollama-models">
+            {% for m in ai_providers.ollama.model_suggestions %}<option value="{{ m }}">{% endfor %}
+          </datalist>
+          <span class="field-hint">Muss lokal via <code class="bg-slate-100 px-1 rounded">ollama pull</code> vorhanden sein.</span>
+        </div>
+      </div>
+
       <div>
         <label class="field-label">Mein Geschlecht</label>
         <select name="user_gender" class="field-input">
@@ -265,40 +339,56 @@
                  copyUrl() { navigator.clipboard.writeText('{{ app_base_url }}/mcp'); this.copiedUrl = true; setTimeout(() => this.copiedUrl = false, 2000); }
                }">
     <div>
-      <h2 class="font-semibold text-slate-700">MCP Server (Claude.ai Web)</h2>
+      <h2 class="font-semibold text-slate-700">MCP Server (Claude.ai & ChatGPT)</h2>
       <p class="text-xs text-slate-400 mt-0.5">
-        Verbinde BewerbungsDB als Remote-MCP-Server mit Claude.ai.
-        Gehe zu <strong class="text-slate-300">claude.ai → Einstellungen → Benutzerdefinierten Connector hinzufügen</strong>.
+        Verbinde BewerbungsDB als Remote-MCP-Server mit Claude.ai oder ChatGPT.
       </p>
     </div>
+
+    <div class="flex items-center gap-2">
+      <code class="text-xs font-mono text-blue-400 select-all flex-1"
+            style="background:#162032; border:1px solid #334155; padding:4px 8px; border-radius:4px;">
+        {{ app_base_url }}/mcp
+      </code>
+      <button @click="copyUrl()" class="text-xs px-2 py-1 rounded transition-colors shrink-0"
+              style="background:#1e3a5f; color:#93c5fd; border:1px solid #1e40af;"
+              x-text="copiedUrl ? '✓ Kopiert' : 'Kopieren'">
+      </button>
+    </div>
+
+    <div class="flex flex-wrap gap-2">
+      <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener"
+         class="text-xs px-3 py-1.5 rounded-lg transition-colors"
+         style="background:#1e3a5f; color:#93c5fd; border:1px solid #1e40af;">
+        Claude.ai Connector-Einstellungen öffnen ↗
+      </a>
+      <a href="https://chatgpt.com/" target="_blank" rel="noopener"
+         class="text-xs px-3 py-1.5 rounded-lg transition-colors"
+         style="background:#1e3a5f; color:#93c5fd; border:1px solid #1e40af;">
+        ChatGPT öffnen ↗
+      </a>
+    </div>
+    <p class="text-xs text-slate-500">
+      Beide Buttons öffnen die jeweilige Seite in einem neuen Tab — die URL oben dort unter
+      <strong class="text-slate-400">Einstellungen → Connectors → Benutzerdefinierten Connector hinzufügen</strong>
+      einfügen (bei ChatGPT nur mit Plus/Pro/Team-Account verfügbar).
+    </p>
 
     <ol class="space-y-2 text-sm">
       <li class="flex gap-2">
         <span class="shrink-0 w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center mt-0.5"
               style="background:#1e3a5f; color:#93c5fd;">1</span>
-        <div>
-          <span class="text-slate-300">URL eingeben und Connector erstellen:</span>
-          <div class="flex items-center gap-2 mt-1">
-            <code class="text-xs font-mono text-blue-400 select-all"
-                  style="background:#162032; border:1px solid #334155; padding:4px 8px; border-radius:4px;">
-              {{ app_base_url }}/mcp
-            </code>
-            <button @click="copyUrl()" class="text-xs px-2 py-1 rounded transition-colors shrink-0"
-                    style="background:#1e3a5f; color:#93c5fd; border:1px solid #1e40af;"
-                    x-text="copiedUrl ? '✓ Kopiert' : 'Kopieren'">
-            </button>
-          </div>
-        </div>
+        <span class="text-slate-300">Oben verlinkte Connector-Einstellungen öffnen, URL einfügen, Connector erstellen.</span>
       </li>
       <li class="flex gap-2">
         <span class="shrink-0 w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center mt-0.5"
               style="background:#1e3a5f; color:#93c5fd;">2</span>
-        <span class="text-slate-300">Claude.ai öffnet ein Anmeldefenster → mit BewerbungsDB-Passwort einloggen.</span>
+        <span class="text-slate-300">Es öffnet sich ein Anmeldefenster → mit BewerbungsDB-Passwort einloggen.</span>
       </li>
       <li class="flex gap-2">
         <span class="shrink-0 w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center mt-0.5"
               style="background:#1e3a5f; color:#93c5fd;">3</span>
-        <span class="text-slate-300">Verbindung ist aktiv — Claude kann jetzt Stellen lesen und aktualisieren.</span>
+        <span class="text-slate-300">Verbindung ist aktiv — die KI kann jetzt Stellen lesen und aktualisieren.</span>
       </li>
     </ol>
 
