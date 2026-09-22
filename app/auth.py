@@ -230,6 +230,233 @@ def clear_failed(request: Request) -> None:
     _failed.pop(_client_ip(request), None)
 
 
+# ── TOTP two-factor authentication ────────────────────────────────────────────
+
+def get_totp_enabled() -> bool:
+    return _get("totp_enabled") == "true"
+
+
+def get_totp_secret() -> Optional[str]:
+    return _get("totp_secret")
+
+
+def verify_totp_code(code: str) -> bool:
+    secret = get_totp_secret()
+    code = (code or "").strip().replace(" ", "")
+    if not secret or not code.isdigit():
+        return False
+    import pyotp
+    return pyotp.TOTP(secret).verify(code, valid_window=1)
+
+
+def enable_totp(secret: str) -> None:
+    _set("totp_secret", secret)
+    _set("totp_enabled", "true")
+
+
+def disable_totp() -> None:
+    _set("totp_enabled", "false")
+    _set("totp_secret", "")
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute("DELETE FROM totp_backup_codes")
+
+
+# ── TOTP backup codes ─────────────────────────────────────────────────────────
+
+def _format_backup_code(raw_hex: str) -> str:
+    return f"{raw_hex[0:4]}-{raw_hex[4:8]}-{raw_hex[8:12]}"
+
+
+def generate_backup_codes(n: int = 10) -> list[str]:
+    """Replace all existing backup codes with n new ones. Returns raw codes (shown once)."""
+    from app.database import get_db
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    codes = []
+    with get_db() as conn:
+        conn.execute("DELETE FROM totp_backup_codes")
+        for _ in range(n):
+            raw = secrets.token_hex(6).upper()
+            codes.append(_format_backup_code(raw))
+            conn.execute(
+                "INSERT INTO totp_backup_codes (code_hash, created_at) VALUES (?, ?)",
+                (_key_hash(raw), now),
+            )
+    return codes
+
+
+def verify_backup_code(code: str) -> bool:
+    raw = (code or "").strip().upper().replace("-", "").replace(" ", "")
+    if not raw:
+        return False
+    h = _key_hash(raw)
+    from app.database import get_db
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM totp_backup_codes WHERE code_hash = ? AND used_at IS NULL", (h,)
+        ).fetchone()
+        if not row:
+            return False
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute("UPDATE totp_backup_codes SET used_at = ? WHERE id = ?", (now, row["id"]))
+    return True
+
+
+def count_unused_backup_codes() -> int:
+    from app.database import get_db
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM totp_backup_codes WHERE used_at IS NULL"
+        ).fetchone()[0]
+
+
+# ── WebAuthn passkeys (trusted devices) ───────────────────────────────────────
+
+def get_webauthn_user_id() -> bytes:
+    """Stable random user handle for this single-account app, generated once."""
+    hex_id = _get("webauthn_user_id")
+    if not hex_id:
+        hex_id = secrets.token_hex(16)
+        _set("webauthn_user_id", hex_id)
+    return bytes.fromhex(hex_id)
+
+
+def list_webauthn_credentials() -> list[dict]:
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, created_at, last_used_at FROM webauthn_credentials "
+            "ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_webauthn_credential_ids() -> list[str]:
+    """Base64url credential IDs (as sent by the browser), for login allow_credentials."""
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute("SELECT credential_id FROM webauthn_credentials").fetchall()
+    return [r["credential_id"] for r in rows]
+
+
+def get_webauthn_credential_by_cred_id(credential_id_b64: str) -> Optional[dict]:
+    from app.database import get_db
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM webauthn_credentials WHERE credential_id = ?", (credential_id_b64,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_webauthn_credential(
+    name: str, credential_id_b64: str, public_key_b64: str, sign_count: int
+) -> None:
+    from app.database import get_db
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO webauthn_credentials "
+            "(name, credential_id, public_key, sign_count, created_at) VALUES (?, ?, ?, ?, ?)",
+            (name, credential_id_b64, public_key_b64, sign_count, now),
+        )
+
+
+def update_webauthn_credential_usage(credential_id_b64: str, new_sign_count: int) -> None:
+    from app.database import get_db
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE webauthn_credentials SET sign_count = ?, last_used_at = ? WHERE credential_id = ?",
+            (new_sign_count, now, credential_id_b64),
+        )
+
+
+def delete_webauthn_credential(cred_row_id: int) -> None:
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute("DELETE FROM webauthn_credentials WHERE id = ?", (cred_row_id,))
+
+
+# ── Settings reset / export / import ──────────────────────────────────────────
+# "Settings" = integrations/config (API keys, OIDC providers, Claude key, MCP
+# token, preferences). Login credentials (password, TOTP, passkeys) are never
+# touched by reset, and are only included in export/import when explicitly
+# opted in — they have their own dedicated management UI elsewhere.
+
+_SETTINGS_CREDENTIAL_KEYS = {"password_hash", "totp_secret", "totp_enabled", "webauthn_user_id", "mcp_token"}
+_SETTINGS_RESET_KEYS = {"claude_api_key", "user_gender"}
+
+
+def reset_settings_data() -> None:
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute("DELETE FROM api_keys")
+        conn.execute("DELETE FROM oidc_providers")
+        placeholders = ", ".join("?" for _ in _SETTINGS_RESET_KEYS)
+        conn.execute(f"DELETE FROM app_settings WHERE key IN ({placeholders})", tuple(_SETTINGS_RESET_KEYS))
+    _set("mcp_token", secrets.token_urlsafe(32))
+
+
+def export_settings_data(include_credentials: bool) -> dict:
+    from app.database import get_db
+    with get_db() as conn:
+        app_settings = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM app_settings").fetchall()}
+        api_keys = [dict(r) for r in conn.execute("SELECT * FROM api_keys").fetchall()]
+        oidc_providers = [dict(r) for r in conn.execute("SELECT * FROM oidc_providers").fetchall()]
+        backup_codes = [dict(r) for r in conn.execute("SELECT * FROM totp_backup_codes").fetchall()]
+        webauthn_creds = [dict(r) for r in conn.execute("SELECT * FROM webauthn_credentials").fetchall()]
+
+    if not include_credentials:
+        for k in _SETTINGS_CREDENTIAL_KEYS:
+            app_settings.pop(k, None)
+        backup_codes = []
+        webauthn_creds = []
+
+    return {
+        "includes_credentials": include_credentials,
+        "app_settings": app_settings,
+        "api_keys": api_keys,
+        "oidc_providers": oidc_providers,
+        "totp_backup_codes": backup_codes,
+        "webauthn_credentials": webauthn_creds,
+    }
+
+
+def describe_settings_import(data: dict) -> dict:
+    return {
+        "api_keys": len(data.get("api_keys", [])),
+        "oidc_providers": len(data.get("oidc_providers", [])),
+        "includes_credentials": bool(data.get("includes_credentials")),
+    }
+
+
+def import_settings_data(data: dict) -> None:
+    """Replace api_keys/oidc_providers/non-credential app_settings from the bundle.
+    Only touches password/2FA/passkeys if the bundle explicitly includes them —
+    otherwise this device's own login stays exactly as it was."""
+    from app.database import get_db, _insert_rows
+    app_settings = data.get("app_settings", {})
+    includes_credentials = bool(data.get("includes_credentials"))
+    with get_db() as conn:
+        conn.execute("DELETE FROM api_keys")
+        conn.execute("DELETE FROM oidc_providers")
+        for k, v in app_settings.items():
+            if not includes_credentials and k in _SETTINGS_CREDENTIAL_KEYS:
+                continue
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (k, v),
+            )
+        _insert_rows(conn, "api_keys", data.get("api_keys", []))
+        _insert_rows(conn, "oidc_providers", data.get("oidc_providers", []))
+        if includes_credentials:
+            conn.execute("DELETE FROM totp_backup_codes")
+            conn.execute("DELETE FROM webauthn_credentials")
+            _insert_rows(conn, "totp_backup_codes", data.get("totp_backup_codes", []))
+            _insert_rows(conn, "webauthn_credentials", data.get("webauthn_credentials", []))
+
+
 # ── API key FastAPI dependency ────────────────────────────────────────────────
 
 async def require_api_key(

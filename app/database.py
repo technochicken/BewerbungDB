@@ -114,6 +114,23 @@ CREATE TABLE IF NOT EXISTS oidc_providers (
     created_at     TEXT NOT NULL,
     updated_at     TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS totp_backup_codes (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    code_hash  TEXT NOT NULL UNIQUE,
+    created_at TEXT NOT NULL,
+    used_at    TEXT
+);
+
+CREATE TABLE IF NOT EXISTS webauthn_credentials (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    name          TEXT NOT NULL,
+    credential_id TEXT NOT NULL UNIQUE,
+    public_key    TEXT NOT NULL,
+    sign_count    INTEGER NOT NULL DEFAULT 0,
+    created_at    TEXT NOT NULL,
+    last_used_at  TEXT
+);
 """
 
 # Columns added after initial release — applied as safe migrations
@@ -185,6 +202,70 @@ def get_job_with_tags(conn, job_id: int):
     d = dict(row)
     d["tags"] = tags
     return d
+
+
+def _insert_rows(conn, table: str, rows: list[dict]) -> None:
+    """Bulk-insert dict rows into table, preserving whatever columns each row has
+    (so an older export missing newer columns still imports cleanly).
+
+    `table` is always a hardcoded literal from trusted call sites. Row keys,
+    however, come from an uploaded import file and are untrusted — they're
+    validated against the table's real columns before being interpolated into
+    SQL, so a crafted key can never inject arbitrary SQL text."""
+    if not rows:
+        return
+    allowed = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    cols = [c for c in rows[0].keys() if c in allowed]
+    if not cols:
+        return
+    col_list = ", ".join(cols)
+    placeholders = ", ".join("?" for _ in cols)
+    conn.executemany(
+        f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
+        [tuple(r.get(c) for c in cols) for r in rows],
+    )
+
+
+# ── DB reset / export / import (jobs + related data) ───────────────────────────
+
+def reset_jobs_data() -> None:
+    """Wipe all job/search/alert data. Does not touch settings, auth, or passkeys."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM jobs")  # cascades to job_tags, job_history
+        conn.execute("DELETE FROM search_configs")
+        conn.execute("DELETE FROM alert_configs")
+
+
+def export_jobs_data() -> dict:
+    with get_db() as conn:
+        return {
+            "jobs":           [dict(r) for r in conn.execute("SELECT * FROM jobs").fetchall()],
+            "job_tags":       [dict(r) for r in conn.execute("SELECT * FROM job_tags").fetchall()],
+            "job_history":    [dict(r) for r in conn.execute("SELECT * FROM job_history").fetchall()],
+            "search_configs": [dict(r) for r in conn.execute("SELECT * FROM search_configs").fetchall()],
+            "alert_configs":  [dict(r) for r in conn.execute("SELECT * FROM alert_configs").fetchall()],
+        }
+
+
+def describe_jobs_import(data: dict) -> dict:
+    return {
+        "jobs":           len(data.get("jobs", [])),
+        "search_configs": len(data.get("search_configs", [])),
+        "alert_configs":  len(data.get("alert_configs", [])),
+    }
+
+
+def import_jobs_data(data: dict) -> None:
+    """Replace all job/search/alert data with the given export bundle."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM jobs")  # cascades to job_tags, job_history
+        conn.execute("DELETE FROM search_configs")
+        conn.execute("DELETE FROM alert_configs")
+        _insert_rows(conn, "jobs", data.get("jobs", []))
+        _insert_rows(conn, "job_tags", data.get("job_tags", []))
+        _insert_rows(conn, "job_history", data.get("job_history", []))
+        _insert_rows(conn, "search_configs", data.get("search_configs", []))
+        _insert_rows(conn, "alert_configs", data.get("alert_configs", []))
 
 
 def record_history(conn, job_id: int, field: str, old_val, new_val, now: str):
