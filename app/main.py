@@ -1,6 +1,7 @@
 import asyncio
 import base64
 import hashlib
+import io
 import json
 import logging
 import secrets
@@ -9,9 +10,21 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
+from urllib.parse import urlparse
 
-from fastapi import BackgroundTasks, FastAPI, Request, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+import pyotp
+import qrcode
+import qrcode.image.svg
+import webauthn
+from webauthn.helpers.structs import (
+    AuthenticatorSelectionCriteria,
+    PublicKeyCredentialDescriptor,
+    ResidentKeyRequirement,
+    UserVerificationRequirement,
+)
+
+from fastapi import BackgroundTasks, FastAPI, Request, Form, HTTPException, Query, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -24,14 +37,23 @@ from app.auth import (
     _get as settings_get, _set as settings_set,
     generate_csrf_token, validate_csrf_token,
     create_api_key, list_api_keys, revoke_api_key, delete_api_key,
+    get_totp_enabled, enable_totp, disable_totp, verify_totp_code,
+    generate_backup_codes, verify_backup_code, count_unused_backup_codes,
+    get_webauthn_user_id, list_webauthn_credentials, list_webauthn_credential_ids,
+    get_webauthn_credential_by_cred_id, create_webauthn_credential,
+    update_webauthn_credential_usage, delete_webauthn_credential,
+    reset_settings_data, export_settings_data, describe_settings_import, import_settings_data,
 )
 from app.auth_oidc import (
     list_oidc_providers, get_oidc_provider, get_oidc_provider_by_name,
     create_oidc_provider, update_oidc_provider, delete_oidc_provider,
     build_auth_url, exchange_code, get_user_info, PROVIDER_PRESETS,
 )
-from app.config import POLL_INTERVAL_SECS, URL_CHECK_INTERVAL_SECS, SESSION_SECRET, APP_BASE_URL
-from app.database import get_db, get_job_with_tags, init_db, record_history
+from app.config import POLL_INTERVAL_SECS, URL_CHECK_INTERVAL_SECS, SESSION_SECRET, APP_BASE_URL, DATA_DIR
+from app.database import (
+    get_db, get_job_with_tags, init_db, record_history,
+    reset_jobs_data, export_jobs_data, describe_jobs_import, import_jobs_data,
+)
 from app.models import ALL_STATUSES, STATUS_COLORS
 from app.api.jobs import router as jobs_router, SORT_MAP
 from app.api.searches import router as searches_router
@@ -39,6 +61,58 @@ from app.services.poller import poll_all_active, check_all_urls
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# ── WebAuthn (passkey trusted devices) config ──────────────────────────────────
+WEBAUTHN_RP_ID   = urlparse(APP_BASE_URL).hostname or "localhost"
+WEBAUTHN_RP_NAME = "BewerbungsDB"
+WEBAUTHN_ORIGIN  = APP_BASE_URL
+
+
+DANGER_ACTIONS = {
+    "reset-db":        {"title": "Datenbank zurücksetzen",   "kind": "reset",  "scope": "db"},
+    "reset-settings":  {"title": "Einstellungen zurücksetzen", "kind": "reset",  "scope": "settings"},
+    "import-db":       {"title": "Datenbank importieren",    "kind": "import", "scope": "db"},
+    "import-settings": {"title": "Einstellungen importieren", "kind": "import", "scope": "settings"},
+}
+
+IMPORT_TMP_DIR = DATA_DIR / "tmp_imports"
+IMPORT_TMP_DIR.mkdir(parents=True, exist_ok=True)
+MAX_IMPORT_SIZE = 20 * 1024 * 1024
+
+
+def _safe_next(url) -> str:
+    """Only allow same-origin, path-absolute redirect targets — rejects
+    protocol-relative URLs like //evil.com that browsers treat as external."""
+    if isinstance(url, str) and url.startswith("/") and not url.startswith("//") and not url.startswith("/\\"):
+        return url
+    return "/"
+
+
+def _danger_challenge_key(action: str) -> str:
+    return f"danger_challenge_{action}"
+
+
+def _pending_import_key(scope: str) -> str:
+    return f"pending_import_{scope}"
+
+
+def _cleanup_stale_imports() -> None:
+    cutoff = time.time() - 3600
+    for f in IMPORT_TMP_DIR.glob("*.json"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def _totp_qr_svg(otpauth_uri: str) -> str:
+    qr = qrcode.QRCode(image_factory=qrcode.image.svg.SvgPathImage, box_size=8, border=2)
+    qr.add_data(otpauth_uri)
+    qr.make(fit=True)
+    buf = io.BytesIO()
+    qr.make_image().save(buf)
+    return buf.getvalue().decode("utf-8")
 
 
 async def _background_loop(func, interval_secs: int, name: str):
@@ -99,8 +173,8 @@ app = FastAPI(title="BewerbungsDB", lifespan=lifespan)
 # ── Middleware (order matters: last added = outermost = runs first) ───────────
 
 # Auth middleware — runs second (after session is populated)
-_PUBLIC_PATHS    = {"/login", "/logout"}
-_PUBLIC_PREFIXES = ("/api/", "/mcp", "/.well-known", "/oauth", "/auth/oidc")
+_PUBLIC_PATHS    = {"/login", "/logout", "/login/2fa"}
+_PUBLIC_PREFIXES = ("/api/", "/mcp", "/.well-known", "/oauth", "/auth/oidc", "/auth/passkey")
 
 class _LoginMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
@@ -384,6 +458,7 @@ def login_page(request: Request, next: str = "/"):
         "next": next,
         "error": None,
         "oidc_providers": providers,
+        "has_passkeys": bool(list_webauthn_credential_ids()),
         "csrf_token": generate_csrf_token(request.session),
     })
 
@@ -393,9 +468,9 @@ async def login_submit(
     request: Request,
     password: str = Form(...),
     next: str = Form("/"),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
 
     if is_rate_limited(request):
@@ -404,16 +479,22 @@ async def login_submit(
             "request": request, "next": next,
             "error": "Zu viele Fehlversuche. Bitte 5 Minuten warten.",
             "oidc_providers": providers,
+            "has_passkeys": bool(list_webauthn_credential_ids()),
             "csrf_token": generate_csrf_token(request.session),
         }, status_code=429)
 
     stored = get_password_hash()
     if stored and verify_password(password, stored):
         clear_failed(request)
+        next_url = _safe_next(next)
+        if get_totp_enabled():
+            request.session["totp_pending"] = True
+            request.session["login_next"] = next_url
+            return RedirectResponse("/login/2fa", status_code=303)
         request.session["authenticated"] = True
         if request.session.get("oauth_pending"):
             return RedirectResponse("/oauth/complete", status_code=303)
-        return RedirectResponse(next if next.startswith("/") else "/", status_code=303)
+        return RedirectResponse(next_url, status_code=303)
 
     record_failed(request)
     providers = [p for p in list_oidc_providers() if p["enabled"]]
@@ -421,16 +502,123 @@ async def login_submit(
         "request": request, "next": next,
         "error": "Falsches Passwort.",
         "oidc_providers": providers,
+        "has_passkeys": bool(list_webauthn_credential_ids()),
+        "csrf_token": generate_csrf_token(request.session),
+    }, status_code=401)
+
+
+@app.get("/login/2fa", response_class=HTMLResponse)
+def login_2fa_page(request: Request):
+    if request.session.get("authenticated"):
+        return RedirectResponse("/", status_code=303)
+    if not request.session.get("totp_pending"):
+        return RedirectResponse("/login", status_code=303)
+    return templates.TemplateResponse("login_2fa.html", {
+        "request": request,
+        "error": None,
+        "csrf_token": generate_csrf_token(request.session),
+    })
+
+
+@app.post("/login/2fa", response_class=HTMLResponse)
+def login_2fa_submit(request: Request, code: str = Form(...), csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    if not request.session.get("totp_pending"):
+        return RedirectResponse("/login", status_code=303)
+
+    if is_rate_limited(request):
+        return templates.TemplateResponse("login_2fa.html", {
+            "request": request,
+            "error": "Zu viele Fehlversuche. Bitte 5 Minuten warten.",
+            "csrf_token": generate_csrf_token(request.session),
+        }, status_code=429)
+
+    if verify_totp_code(code) or verify_backup_code(code):
+        clear_failed(request)
+        request.session.pop("totp_pending", None)
+        next_url = request.session.pop("login_next", "/")
+        request.session["authenticated"] = True
+        if request.session.get("oauth_pending"):
+            return RedirectResponse("/oauth/complete", status_code=303)
+        return RedirectResponse(next_url, status_code=303)
+
+    record_failed(request)
+    return templates.TemplateResponse("login_2fa.html", {
+        "request": request,
+        "error": "Ungültiger Code.",
         "csrf_token": generate_csrf_token(request.session),
     }, status_code=401)
 
 
 @app.post("/logout")
-def logout(request: Request, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def logout(request: Request, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
+
+
+# ─── Passkey login (public — trusted-device shortcut, skips password + 2FA) ───
+
+@app.get("/auth/passkey/login-options")
+def passkey_login_options(request: Request):
+    cred_ids = list_webauthn_credential_ids()
+    if not cred_ids:
+        raise HTTPException(404, "No passkeys registered")
+    options = webauthn.generate_authentication_options(
+        rp_id=WEBAUTHN_RP_ID,
+        allow_credentials=[
+            PublicKeyCredentialDescriptor(id=webauthn.base64url_to_bytes(cid))
+            for cid in cred_ids
+        ],
+        user_verification=UserVerificationRequirement.REQUIRED,
+    )
+    request.session["webauthn_auth_challenge"] = webauthn.helpers.bytes_to_base64url(options.challenge)
+    return JSONResponse(content=json.loads(webauthn.options_to_json(options)))
+
+
+@app.post("/auth/passkey/login-verify")
+async def passkey_login_verify(request: Request):
+    if is_rate_limited(request):
+        raise HTTPException(429, "Zu viele Fehlversuche. Bitte 5 Minuten warten.")
+
+    body = await request.json()
+    credential = body.get("credential")
+    next_url = _safe_next(body.get("next"))
+
+    challenge_str = request.session.pop("webauthn_auth_challenge", None)
+    if not challenge_str or not credential:
+        record_failed(request)
+        raise HTTPException(400, "No pending passkey challenge")
+
+    cred_id = credential.get("id") if isinstance(credential, dict) else None
+    stored = get_webauthn_credential_by_cred_id(cred_id) if cred_id else None
+    if not stored:
+        record_failed(request)
+        raise HTTPException(401, "Unknown passkey")
+
+    try:
+        result = webauthn.verify_authentication_response(
+            credential=credential,
+            expected_challenge=webauthn.base64url_to_bytes(challenge_str),
+            expected_rp_id=WEBAUTHN_RP_ID,
+            expected_origin=WEBAUTHN_ORIGIN,
+            credential_public_key=base64.b64decode(stored["public_key"]),
+            credential_current_sign_count=stored["sign_count"],
+            require_user_verification=True,
+        )
+    except Exception as e:
+        logger.warning(f"Passkey login verify failed: {e}")
+        record_failed(request)
+        raise HTTPException(401, "Passkey verification failed")
+
+    update_webauthn_credential_usage(cred_id, result.new_sign_count)
+    clear_failed(request)
+    request.session["authenticated"] = True
+    if request.session.get("oauth_pending"):
+        return JSONResponse({"redirect": "/oauth/complete"})
+    return JSONResponse({"redirect": next_url})
 
 
 # ─── OIDC SSO routes ──────────────────────────────────────────────────────────
@@ -491,16 +679,29 @@ async def oidc_callback(
     request.session["authenticated"] = True
     if request.session.get("oauth_pending"):
         return RedirectResponse("/oauth/complete", status_code=303)
-    return RedirectResponse(next_url if next_url.startswith("/") else "/", status_code=303)
+    return RedirectResponse(_safe_next(next_url), status_code=303)
 
 
 # ─── Settings ─────────────────────────────────────────────────────────────────
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
+    _cleanup_stale_imports()
     ck = settings_get("claude_api_key") or ""
     mcp_token = settings_get("mcp_token") or ""
     new_key = request.session.pop("flash_new_key", None)
+
+    totp_enabled = get_totp_enabled()
+    totp_setup = None
+    setup_secret = request.session.get("totp_setup_secret")
+    if setup_secret and not totp_enabled:
+        uri = pyotp.TOTP(setup_secret).provisioning_uri(name="admin", issuer_name="BewerbungsDB")
+        totp_setup = {
+            "secret": setup_secret,
+            "otpauth_uri": uri,
+            "qr_svg": _totp_qr_svg(uri),
+        }
+
     return templates.TemplateResponse("settings.html", {
         "request": request,
         "claude_api_key": ck[:8] + "••••••••" if len(ck) > 8 else ck,
@@ -515,6 +716,11 @@ def settings_page(request: Request):
         "oidc_providers": list_oidc_providers(),
         "oidc_presets": PROVIDER_PRESETS,
         "needs_password_change": settings_get("needs_password_change") == "true",
+        "totp_enabled": totp_enabled,
+        "totp_setup": totp_setup,
+        "backup_codes_remaining": count_unused_backup_codes() if totp_enabled else 0,
+        "flash_backup_codes": request.session.pop("flash_backup_codes", None),
+        "webauthn_credentials": list_webauthn_credentials(),
         "csrf_token": generate_csrf_token(request.session),
     })
 
@@ -525,9 +731,9 @@ def change_password(
     current_password: str = Form(...),
     new_password: str = Form(...),
     new_password2: str = Form(...),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     stored = get_password_hash()
     if not stored or not verify_password(current_password, stored):
@@ -541,9 +747,315 @@ def change_password(
     return RedirectResponse("/settings?saved=password", status_code=303)
 
 
+@app.post("/settings/2fa/start-setup", response_class=HTMLResponse)
+def totp_start_setup(request: Request, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    if get_totp_enabled():
+        return RedirectResponse("/settings#security", status_code=303)
+    request.session["totp_setup_secret"] = pyotp.random_base32()
+    return RedirectResponse("/settings#security", status_code=303)
+
+
+@app.post("/settings/2fa/cancel-setup", response_class=HTMLResponse)
+def totp_cancel_setup(request: Request, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    request.session.pop("totp_setup_secret", None)
+    return RedirectResponse("/settings#security", status_code=303)
+
+
+@app.post("/settings/2fa/confirm-setup", response_class=HTMLResponse)
+def totp_confirm_setup(request: Request, code: str = Form(""), csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    setup_secret = request.session.get("totp_setup_secret")
+    if not setup_secret:
+        return RedirectResponse("/settings#security", status_code=303)
+    code = (code or "").strip().replace(" ", "")
+    if not (code.isdigit() and pyotp.TOTP(setup_secret).verify(code, valid_window=1)):
+        return RedirectResponse("/settings?error=2fa_code#security", status_code=303)
+    enable_totp(setup_secret)
+    request.session.pop("totp_setup_secret", None)
+    request.session["flash_backup_codes"] = generate_backup_codes()
+    return RedirectResponse("/settings?saved=2fa#security", status_code=303)
+
+
+@app.post("/settings/2fa/disable", response_class=HTMLResponse)
+def totp_disable(request: Request, current_password: str = Form(...), csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    stored = get_password_hash()
+    if not stored or not verify_password(current_password, stored):
+        return RedirectResponse("/settings?error=wrong_password#security", status_code=303)
+    disable_totp()
+    return RedirectResponse("/settings?saved=2fa_disabled#security", status_code=303)
+
+
+@app.post("/settings/2fa/regenerate-backup-codes", response_class=HTMLResponse)
+def totp_regen_backup_codes(request: Request, current_password: str = Form(...), csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    stored = get_password_hash()
+    if not stored or not verify_password(current_password, stored):
+        return RedirectResponse("/settings?error=wrong_password#security", status_code=303)
+    if not get_totp_enabled():
+        return RedirectResponse("/settings#security", status_code=303)
+    request.session["flash_backup_codes"] = generate_backup_codes()
+    return RedirectResponse("/settings?saved=2fa_codes#security", status_code=303)
+
+
+# ─── Passkey (trusted device) management ──────────────────────────────────────
+
+@app.get("/settings/passkeys/register-options")
+def passkey_register_options(request: Request):
+    existing = list_webauthn_credential_ids()
+    options = webauthn.generate_registration_options(
+        rp_id=WEBAUTHN_RP_ID,
+        rp_name=WEBAUTHN_RP_NAME,
+        user_id=get_webauthn_user_id(),
+        user_name="admin",
+        user_display_name="BewerbungsDB Admin",
+        exclude_credentials=[
+            PublicKeyCredentialDescriptor(id=webauthn.base64url_to_bytes(cid))
+            for cid in existing
+        ],
+        authenticator_selection=AuthenticatorSelectionCriteria(
+            resident_key=ResidentKeyRequirement.DISCOURAGED,
+            user_verification=UserVerificationRequirement.REQUIRED,
+        ),
+    )
+    request.session["webauthn_reg_challenge"] = webauthn.helpers.bytes_to_base64url(options.challenge)
+    return JSONResponse(content=json.loads(webauthn.options_to_json(options)))
+
+
+@app.post("/settings/passkeys/register-verify")
+async def passkey_register_verify(request: Request):
+    body = await request.json()
+    if not validate_csrf_token(request.session, body.get("csrf", "")):
+        raise HTTPException(403, "Invalid CSRF token")
+
+    credential = body.get("credential")
+    name = (body.get("name") or "").strip()[:100] or "Unbenanntes Gerät"
+    challenge_str = request.session.pop("webauthn_reg_challenge", None)
+    if not challenge_str or not credential:
+        raise HTTPException(400, "No pending registration challenge")
+
+    try:
+        result = webauthn.verify_registration_response(
+            credential=credential,
+            expected_challenge=webauthn.base64url_to_bytes(challenge_str),
+            expected_rp_id=WEBAUTHN_RP_ID,
+            expected_origin=WEBAUTHN_ORIGIN,
+            require_user_verification=True,
+        )
+    except Exception as e:
+        logger.warning(f"Passkey registration verify failed: {e}")
+        raise HTTPException(400, "Registrierung fehlgeschlagen")
+
+    create_webauthn_credential(
+        name=name,
+        credential_id_b64=webauthn.helpers.bytes_to_base64url(result.credential_id),
+        public_key_b64=base64.b64encode(result.credential_public_key).decode(),
+        sign_count=result.sign_count,
+    )
+    return JSONResponse({"ok": True})
+
+
+@app.post("/settings/passkeys/{cred_id}/delete", response_class=HTMLResponse)
+def passkey_delete(request: Request, cred_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    delete_webauthn_credential(cred_id)
+    return RedirectResponse("/settings?saved=passkey#security", status_code=303)
+
+
+# ─── Export ─────────────────────────────────────────────────────────────────
+
+def _export_response(scope: str, data: dict) -> Response:
+    payload = {
+        "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "scope": scope,
+        "data": data,
+    }
+    fname = f"bewerbungsdb-{scope}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.post("/settings/export/db")
+def export_db(request: Request, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    return _export_response("db", export_jobs_data())
+
+
+@app.post("/settings/export/settings")
+def export_settings(
+    request: Request,
+    include_credentials: str = Form(""),
+    current_password: str = Form(""),
+    csrf: str = Form(""),
+):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    want_credentials = include_credentials == "on"
+    if want_credentials:
+        stored = get_password_hash()
+        if not stored or not verify_password(current_password, stored):
+            return RedirectResponse("/settings?error=wrong_password#danger-zone", status_code=303)
+    return _export_response("settings", export_settings_data(include_credentials=want_credentials))
+
+
+# ─── Import upload (stages a file, then requires the danger-zone ceremony) ───
+
+@app.post("/settings/import/{scope}/upload", response_class=HTMLResponse)
+async def import_upload(
+    request: Request, scope: str, file: UploadFile = File(...), csrf: str = Form("")
+):
+    if scope not in ("db", "settings"):
+        raise HTTPException(404)
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+
+    raw = await file.read()
+    if len(raw) > MAX_IMPORT_SIZE:
+        return RedirectResponse("/settings?error=import_too_large#danger-zone", status_code=303)
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict) or parsed.get("scope") != scope:
+            raise ValueError("scope mismatch")
+        data = parsed["data"]
+        if not isinstance(data, dict):
+            raise ValueError("bad data")
+    except Exception:
+        return RedirectResponse("/settings?error=import_invalid#danger-zone", status_code=303)
+
+    old_token = request.session.get(_pending_import_key(scope))
+    if old_token:
+        (IMPORT_TMP_DIR / f"{old_token}.json").unlink(missing_ok=True)
+    token = secrets.token_hex(16)
+    (IMPORT_TMP_DIR / f"{token}.json").write_text(json.dumps(data))
+    request.session[_pending_import_key(scope)] = token
+
+    return RedirectResponse(f"/settings/danger/import-{scope}/confirm", status_code=303)
+
+
+# ─── Danger zone: reset / import confirmation (password + TOTP + typed phrase) ─
+
+@app.get("/settings/danger/{action}/confirm", response_class=HTMLResponse)
+def danger_confirm_page(request: Request, action: str):
+    meta = DANGER_ACTIONS.get(action)
+    if not meta:
+        raise HTTPException(404)
+
+    import_summary = None
+    if meta["kind"] == "import":
+        token = request.session.get(_pending_import_key(meta["scope"]))
+        path = IMPORT_TMP_DIR / f"{token}.json" if token else None
+        if not token or not path.exists():
+            request.session.pop(_pending_import_key(meta["scope"]), None)
+            return RedirectResponse("/settings?error=import_expired#danger-zone", status_code=303)
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            request.session.pop(_pending_import_key(meta["scope"]), None)
+            path.unlink(missing_ok=True)
+            return RedirectResponse("/settings?error=import_invalid#danger-zone", status_code=303)
+        import_summary = (
+            describe_jobs_import(data) if meta["scope"] == "db" else describe_settings_import(data)
+        )
+
+    totp_enabled = get_totp_enabled()
+    challenge = None
+    if totp_enabled:
+        challenge = "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(10))
+        request.session[_danger_challenge_key(action)] = challenge
+
+    return templates.TemplateResponse("danger_confirm.html", {
+        "request": request,
+        "action": action,
+        "meta": meta,
+        "totp_enabled": totp_enabled,
+        "challenge": challenge,
+        "import_summary": import_summary,
+        "error": request.query_params.get("error"),
+        "csrf_token": generate_csrf_token(request.session),
+    })
+
+
+@app.post("/settings/danger/{action}/confirm", response_class=HTMLResponse)
+def danger_confirm_submit(
+    request: Request,
+    action: str,
+    current_password: str = Form(...),
+    totp_code: str = Form(""),
+    phrase: str = Form(...),
+    csrf: str = Form(""),
+):
+    meta = DANGER_ACTIONS.get(action)
+    if not meta:
+        raise HTTPException(404)
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    if not get_totp_enabled():
+        return RedirectResponse("/settings#security", status_code=303)
+
+    def fail(reason: str):
+        request.session.pop(_danger_challenge_key(action), None)
+        return RedirectResponse(f"/settings/danger/{action}/confirm?error={reason}", status_code=303)
+
+    if is_rate_limited(request):
+        return fail("rate_limited")
+
+    stored = get_password_hash()
+    if not stored or not verify_password(current_password, stored):
+        record_failed(request)
+        return fail("wrong_password")
+
+    if not verify_totp_code(totp_code):
+        record_failed(request)
+        return fail("wrong_code")
+
+    expected = request.session.get(_danger_challenge_key(action))
+    if not expected or not secrets.compare_digest((phrase or "").strip(), expected):
+        record_failed(request)
+        return fail("wrong_phrase")
+
+    clear_failed(request)
+    request.session.pop(_danger_challenge_key(action), None)
+
+    if meta["kind"] == "reset":
+        if meta["scope"] == "db":
+            reset_jobs_data()
+        else:
+            reset_settings_data()
+        return RedirectResponse(f"/settings?saved=reset_{meta['scope']}#danger-zone", status_code=303)
+
+    # import
+    scope = meta["scope"]
+    token = request.session.pop(_pending_import_key(scope), None)
+    if not token:
+        return RedirectResponse("/settings#danger-zone", status_code=303)
+    path = IMPORT_TMP_DIR / f"{token}.json"
+    try:
+        data = json.loads(path.read_text())
+        if scope == "db":
+            import_jobs_data(data)
+        else:
+            import_settings_data(data)
+    finally:
+        path.unlink(missing_ok=True)
+
+    return RedirectResponse(f"/settings?saved=import_{scope}#danger-zone", status_code=303)
+
+
 @app.post("/settings/regenerate-mcp-token", response_class=HTMLResponse)
-def renew_mcp_token(request: Request, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def renew_mcp_token(request: Request, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     settings_set("mcp_token", secrets.token_urlsafe(32))
     return RedirectResponse("/settings?saved=mcp", status_code=303)
@@ -554,9 +1066,9 @@ def save_claude_settings(
     request: Request,
     claude_api_key: str = Form(""),
     user_gender: str = Form("männlich"),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     if claude_api_key.strip():
         settings_set("claude_api_key", claude_api_key.strip())
@@ -571,9 +1083,9 @@ def api_key_create(
     request: Request,
     name: str = Form("API Key"),
     expires_at: str = Form(""),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     raw = create_api_key(name.strip() or "API Key", expires_at.strip() or None)
     request.session["flash_new_key"] = raw
@@ -581,16 +1093,16 @@ def api_key_create(
 
 
 @app.post("/settings/api-keys/{key_id}/revoke", response_class=HTMLResponse)
-def api_key_revoke(request: Request, key_id: int, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def api_key_revoke(request: Request, key_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     revoke_api_key(key_id)
     return RedirectResponse("/settings?saved=apikey#api-keys", status_code=303)
 
 
 @app.post("/settings/api-keys/{key_id}/delete", response_class=HTMLResponse)
-def api_key_delete(request: Request, key_id: int, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def api_key_delete(request: Request, key_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     delete_api_key(key_id)
     return RedirectResponse("/settings?saved=apikey#api-keys", status_code=303)
@@ -607,9 +1119,9 @@ def oidc_provider_create(
     client_id: str = Form(...),
     client_secret: str = Form(...),
     scopes: str = Form("openid profile email"),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     try:
         create_oidc_provider(
@@ -623,8 +1135,8 @@ def oidc_provider_create(
 
 
 @app.post("/settings/oidc/{provider_id}/toggle", response_class=HTMLResponse)
-def oidc_provider_toggle(request: Request, provider_id: int, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def oidc_provider_toggle(request: Request, provider_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     from app.database import get_db
     with get_db() as conn:
@@ -635,8 +1147,8 @@ def oidc_provider_toggle(request: Request, provider_id: int, _csrf: str = Form("
 
 
 @app.post("/settings/oidc/{provider_id}/delete", response_class=HTMLResponse)
-def oidc_provider_delete(request: Request, provider_id: int, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def oidc_provider_delete(request: Request, provider_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     delete_oidc_provider(provider_id)
     return RedirectResponse("/settings?saved=oidc#oidc", status_code=303)

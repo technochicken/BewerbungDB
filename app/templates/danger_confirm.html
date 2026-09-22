@@ -1,0 +1,146 @@
+{% extends "base.html" %}
+{% block title %}{{ meta.title }} – BewerbungsDB{% endblock %}
+
+{% block content %}
+<div class="max-w-lg space-y-6">
+
+  <div class="rounded-lg p-4" style="background:#450a0a; border:1px solid #7f1d1d;">
+    <h1 class="text-lg font-bold text-red-300">⚠ {{ meta.title }}</h1>
+    {% if meta.scope == 'db' %}
+    <p class="text-sm text-red-200 mt-1">
+      {% if meta.kind == 'reset' %}
+      Löscht dauerhaft alle Bewerbungen, Tags, den Änderungsverlauf, gespeicherte Suchen und Alert-Regeln.
+      {% else %}
+      Ersetzt dauerhaft alle Bewerbungen, Tags, den Änderungsverlauf, gespeicherte Suchen und Alert-Regeln
+      durch den Inhalt der hochgeladenen Datei.
+      {% endif %}
+      Einstellungen, Passwort, 2FA und Passkeys bleiben unangetastet.
+    </p>
+    {% else %}
+    <p class="text-sm text-red-200 mt-1">
+      {% if meta.kind == 'reset' %}
+      Löscht dauerhaft API-Keys, SSO-Anbieter, Claude-Key und Geschlechts-Einstellung und erzeugt ein
+      neues MCP-Token.
+      {% else %}
+      Ersetzt API-Keys, SSO-Anbieter und Einstellungen durch den Inhalt der hochgeladenen Datei.
+      {% endif %}
+      Passwort, 2FA und Passkeys bleiben unangetastet — außer die Datei enthält explizit Zugangsdaten.
+      Bewerbungsdaten sind nicht betroffen.
+    </p>
+    {% endif %}
+  </div>
+
+  {% if import_summary %}
+  <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-4 text-sm">
+    <p class="font-semibold text-slate-300 mb-2">Inhalt der hochgeladenen Datei</p>
+    {% if meta.scope == 'db' %}
+    <ul class="text-slate-400 space-y-0.5">
+      <li>{{ import_summary.jobs }} Bewerbungen</li>
+      <li>{{ import_summary.search_configs }} gespeicherte Suchen</li>
+      <li>{{ import_summary.alert_configs }} Alert-Regeln</li>
+    </ul>
+    {% else %}
+    <ul class="text-slate-400 space-y-0.5">
+      <li>{{ import_summary.api_keys }} API-Keys</li>
+      <li>{{ import_summary.oidc_providers }} SSO-Anbieter</li>
+      <li>
+        Zugangsdaten (Passwort, 2FA, Passkeys):
+        {% if import_summary.includes_credentials %}
+        <span class="text-amber-400 font-medium">enthalten — werden überschrieben</span>
+        {% else %}
+        <span class="text-green-400">nicht enthalten — dein Login bleibt unverändert</span>
+        {% endif %}
+      </li>
+    </ul>
+    {% if import_summary.includes_credentials %}
+    <p class="text-xs text-amber-400 mt-2">
+      ⚠ Jedes in der Datei enthaltene Passkey-Gerät kann sich danach ohne Passwort und 2FA anmelden.
+      Nur importieren, wenn die Datei garantiert von dir selbst stammt.
+    </p>
+    {% endif %}
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {# ── Backup suggestion ────────────────────────────────────────────────────── #}
+  <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-4 space-y-2">
+    <p class="text-sm font-semibold text-slate-300">Vorher ein Backup herunterladen?</p>
+    <p class="text-xs text-slate-400">Empfohlen, bevor du fortfährst — lässt sich später wieder importieren.</p>
+    {% if meta.scope == 'db' %}
+    <form method="post" action="/settings/export/db">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn-secondary text-xs">Datenbank-Backup herunterladen</button>
+    </form>
+    {% else %}
+    <form method="post" action="/settings/export/settings" class="space-y-2" x-data="{ inc: false }">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <label class="flex items-center gap-2 text-xs text-slate-400">
+        <input type="checkbox" name="include_credentials" x-model="inc">
+        Zugangsdaten (Passwort, 2FA, Passkeys, MCP-Token) einschließen
+      </label>
+      <p x-show="inc" x-cloak class="text-xs text-amber-500 -mt-1">
+        Datei anschließend wie ein Passwort behandeln — sie ermöglicht die Anmeldung als Admin.
+      </p>
+      <input x-show="inc" x-cloak type="password" name="current_password"
+             placeholder="Aktuelles Passwort zur Bestätigung" class="field-input text-sm max-w-xs">
+      <button type="submit" class="btn-secondary text-xs">Einstellungs-Backup herunterladen</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if error %}
+  <div class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2.5 rounded-lg">
+    {% if error == 'wrong_password' %}Falsches Passwort.
+    {% elif error == 'wrong_code' %}Ungültiger 2FA-Code.
+    {% elif error == 'wrong_phrase' %}Die eingegebene Phrase stimmt nicht überein.
+    {% elif error == 'rate_limited' %}Zu viele Fehlversuche. Bitte 5 Minuten warten.
+    {% else %}Ein Fehler ist aufgetreten.
+    {% endif %}
+  </div>
+  {% endif %}
+
+  {% if not totp_enabled %}
+  <div class="bg-amber-50 border border-amber-300 text-amber-800 text-sm px-4 py-3 rounded-lg">
+    Diese Aktion erfordert aktivierte Zwei-Faktor-Authentifizierung.
+    <a href="/settings#security" class="underline font-medium">Jetzt in den Einstellungen aktivieren.</a>
+  </div>
+  {% else %}
+  <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-5 space-y-4">
+    <p class="text-sm text-slate-300">
+      Zur Bestätigung: aktuelles Passwort, ein aktueller 2FA-Code aus deiner Authenticator-App
+      (kein Backup-Code, keine Passkey-Sitzung reicht aus) und die untenstehende Phrase exakt eingeben.
+    </p>
+
+    <div class="text-center rounded-lg p-4" style="background:#162032; border:1px solid #334155;">
+      <p class="text-xs text-slate-500 mb-1">Bestätigungsphrase</p>
+      <code class="text-lg font-mono tracking-widest text-blue-300 select-all">{{ challenge }}</code>
+    </div>
+
+    <form method="post" action="/settings/danger/{{ action }}/confirm" class="space-y-4">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+
+      <div>
+        <label class="field-label">Aktuelles Passwort</label>
+        <input type="password" name="current_password" required class="field-input text-sm">
+      </div>
+      <div>
+        <label class="field-label">2FA-Code</label>
+        <input type="text" name="totp_code" required autocomplete="one-time-code" placeholder="123456"
+               class="field-input text-sm font-mono tracking-wider" maxlength="6">
+      </div>
+      <div>
+        <label class="field-label">Phrase eingeben</label>
+        <input type="text" name="phrase" required autocomplete="off"
+               class="field-input text-sm font-mono tracking-wider">
+      </div>
+
+      <div class="flex gap-2">
+        <button type="submit" class="btn-danger text-sm">{{ meta.title }} — endgültig bestätigen</button>
+        <a href="/settings#danger-zone" class="btn-secondary text-sm">Abbrechen</a>
+      </div>
+    </form>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html lang="de" class="h-full">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Zwei-Faktor-Anmeldung – BewerbungsDB</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    html, body { background-color: #0f172a; color: #e2e8f0; }
+    input { background-color: #1e293b !important; color: #e2e8f0 !important; border-color: #475569 !important; }
+    input::placeholder { color: #475569 !important; }
+    input:focus { outline: none; border-color: #3b82f6 !important; box-shadow: 0 0 0 3px rgba(59,130,246,.25) !important; }
+  </style>
+</head>
+<body class="h-full flex items-center justify-center">
+
+  <div class="w-full max-w-sm">
+    <div style="background:#1e293b; border:1px solid #334155;" class="rounded-xl shadow-md p-8">
+
+      <div class="text-center mb-7">
+        <h1 class="text-2xl font-bold text-slate-100">Zwei-Faktor-Code</h1>
+        <p class="text-sm text-slate-400 mt-1">Code aus deiner Authenticator-App oder ein Backup-Code</p>
+      </div>
+
+      {% if error %}
+      <div style="background:#450a0a; border:1px solid #7f1d1d; color:#f87171;" class="text-sm px-4 py-2.5 rounded-lg mb-5">
+        {{ error }}
+      </div>
+      {% endif %}
+
+      <form method="post" action="/login/2fa" class="space-y-4">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+
+        <div>
+          <label class="block text-sm font-medium text-slate-300 mb-1">Code</label>
+          <input type="text" name="code" autofocus required
+                 inputmode="text" autocomplete="one-time-code"
+                 placeholder="123456 oder ABCD-EFGH-IJKL"
+                 class="w-full border rounded-lg px-3 py-2.5 text-sm font-mono tracking-wider">
+        </div>
+
+        <button type="submit"
+                class="w-full bg-blue-600 hover:bg-blue-500 text-white font-semibold py-2.5 rounded-lg text-sm transition-colors">
+          Bestätigen
+        </button>
+      </form>
+
+      <form method="post" action="/logout" class="mt-4">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button type="submit" class="w-full text-xs text-slate-500 hover:text-slate-300">
+          Abbrechen und zurück zur Anmeldung
+        </button>
+      </form>
+
+    </div>
+    <p class="text-center text-xs text-slate-500 mt-4">BewerbungsDB – privates Bewerbungsmanagement</p>
+  </div>
+
+</body>
+</html>
