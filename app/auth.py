@@ -230,6 +230,153 @@ def clear_failed(request: Request) -> None:
     _failed.pop(_client_ip(request), None)
 
 
+# ── TOTP two-factor authentication ────────────────────────────────────────────
+
+def get_totp_enabled() -> bool:
+    return _get("totp_enabled") == "true"
+
+
+def get_totp_secret() -> Optional[str]:
+    return _get("totp_secret")
+
+
+def verify_totp_code(code: str) -> bool:
+    secret = get_totp_secret()
+    code = (code or "").strip().replace(" ", "")
+    if not secret or not code.isdigit():
+        return False
+    import pyotp
+    return pyotp.TOTP(secret).verify(code, valid_window=1)
+
+
+def enable_totp(secret: str) -> None:
+    _set("totp_secret", secret)
+    _set("totp_enabled", "true")
+
+
+def disable_totp() -> None:
+    _set("totp_enabled", "false")
+    _set("totp_secret", "")
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute("DELETE FROM totp_backup_codes")
+
+
+# ── TOTP backup codes ─────────────────────────────────────────────────────────
+
+def _format_backup_code(raw_hex: str) -> str:
+    return f"{raw_hex[0:4]}-{raw_hex[4:8]}-{raw_hex[8:12]}"
+
+
+def generate_backup_codes(n: int = 10) -> list[str]:
+    """Replace all existing backup codes with n new ones. Returns raw codes (shown once)."""
+    from app.database import get_db
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    codes = []
+    with get_db() as conn:
+        conn.execute("DELETE FROM totp_backup_codes")
+        for _ in range(n):
+            raw = secrets.token_hex(6).upper()
+            codes.append(_format_backup_code(raw))
+            conn.execute(
+                "INSERT INTO totp_backup_codes (code_hash, created_at) VALUES (?, ?)",
+                (_key_hash(raw), now),
+            )
+    return codes
+
+
+def verify_backup_code(code: str) -> bool:
+    raw = (code or "").strip().upper().replace("-", "").replace(" ", "")
+    if not raw:
+        return False
+    h = _key_hash(raw)
+    from app.database import get_db
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT id FROM totp_backup_codes WHERE code_hash = ? AND used_at IS NULL", (h,)
+        ).fetchone()
+        if not row:
+            return False
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        conn.execute("UPDATE totp_backup_codes SET used_at = ? WHERE id = ?", (now, row["id"]))
+    return True
+
+
+def count_unused_backup_codes() -> int:
+    from app.database import get_db
+    with get_db() as conn:
+        return conn.execute(
+            "SELECT COUNT(*) FROM totp_backup_codes WHERE used_at IS NULL"
+        ).fetchone()[0]
+
+
+# ── WebAuthn passkeys (trusted devices) ───────────────────────────────────────
+
+def get_webauthn_user_id() -> bytes:
+    """Stable random user handle for this single-account app, generated once."""
+    hex_id = _get("webauthn_user_id")
+    if not hex_id:
+        hex_id = secrets.token_hex(16)
+        _set("webauthn_user_id", hex_id)
+    return bytes.fromhex(hex_id)
+
+
+def list_webauthn_credentials() -> list[dict]:
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute(
+            "SELECT id, name, created_at, last_used_at FROM webauthn_credentials "
+            "ORDER BY created_at DESC"
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def list_webauthn_credential_ids() -> list[str]:
+    """Base64url credential IDs (as sent by the browser), for login allow_credentials."""
+    from app.database import get_db
+    with get_db() as conn:
+        rows = conn.execute("SELECT credential_id FROM webauthn_credentials").fetchall()
+    return [r["credential_id"] for r in rows]
+
+
+def get_webauthn_credential_by_cred_id(credential_id_b64: str) -> Optional[dict]:
+    from app.database import get_db
+    with get_db() as conn:
+        row = conn.execute(
+            "SELECT * FROM webauthn_credentials WHERE credential_id = ?", (credential_id_b64,)
+        ).fetchone()
+    return dict(row) if row else None
+
+
+def create_webauthn_credential(
+    name: str, credential_id_b64: str, public_key_b64: str, sign_count: int
+) -> None:
+    from app.database import get_db
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with get_db() as conn:
+        conn.execute(
+            "INSERT INTO webauthn_credentials "
+            "(name, credential_id, public_key, sign_count, created_at) VALUES (?, ?, ?, ?, ?)",
+            (name, credential_id_b64, public_key_b64, sign_count, now),
+        )
+
+
+def update_webauthn_credential_usage(credential_id_b64: str, new_sign_count: int) -> None:
+    from app.database import get_db
+    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    with get_db() as conn:
+        conn.execute(
+            "UPDATE webauthn_credentials SET sign_count = ?, last_used_at = ? WHERE credential_id = ?",
+            (new_sign_count, now, credential_id_b64),
+        )
+
+
+def delete_webauthn_credential(cred_row_id: int) -> None:
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute("DELETE FROM webauthn_credentials WHERE id = ?", (cred_row_id,))
+
+
 # ── API key FastAPI dependency ────────────────────────────────────────────────
 
 async def require_api_key(
