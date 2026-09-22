@@ -393,9 +393,9 @@ async def login_submit(
     request: Request,
     password: str = Form(...),
     next: str = Form("/"),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
 
     if is_rate_limited(request):
@@ -426,8 +426,8 @@ async def login_submit(
 
 
 @app.post("/logout")
-def logout(request: Request, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def logout(request: Request, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     request.session.clear()
     return RedirectResponse("/login", status_code=303)
@@ -525,9 +525,9 @@ def change_password(
     current_password: str = Form(...),
     new_password: str = Form(...),
     new_password2: str = Form(...),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     stored = get_password_hash()
     if not stored or not verify_password(current_password, stored):
@@ -542,8 +542,8 @@ def change_password(
 
 
 @app.post("/settings/regenerate-mcp-token", response_class=HTMLResponse)
-def renew_mcp_token(request: Request, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def renew_mcp_token(request: Request, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     settings_set("mcp_token", secrets.token_urlsafe(32))
     return RedirectResponse("/settings?saved=mcp", status_code=303)
@@ -554,9 +554,9 @@ def save_claude_settings(
     request: Request,
     claude_api_key: str = Form(""),
     user_gender: str = Form("männlich"),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     if claude_api_key.strip():
         settings_set("claude_api_key", claude_api_key.strip())
@@ -571,9 +571,9 @@ def api_key_create(
     request: Request,
     name: str = Form("API Key"),
     expires_at: str = Form(""),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     raw = create_api_key(name.strip() or "API Key", expires_at.strip() or None)
     request.session["flash_new_key"] = raw
@@ -581,16 +581,16 @@ def api_key_create(
 
 
 @app.post("/settings/api-keys/{key_id}/revoke", response_class=HTMLResponse)
-def api_key_revoke(request: Request, key_id: int, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def api_key_revoke(request: Request, key_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     revoke_api_key(key_id)
     return RedirectResponse("/settings?saved=apikey#api-keys", status_code=303)
 
 
 @app.post("/settings/api-keys/{key_id}/delete", response_class=HTMLResponse)
-def api_key_delete(request: Request, key_id: int, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def api_key_delete(request: Request, key_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     delete_api_key(key_id)
     return RedirectResponse("/settings?saved=apikey#api-keys", status_code=303)
@@ -607,9 +607,9 @@ def oidc_provider_create(
     client_id: str = Form(...),
     client_secret: str = Form(...),
     scopes: str = Form("openid profile email"),
-    _csrf: str = Form(""),
+    csrf: str = Form(""),
 ):
-    if not validate_csrf_token(request.session, _csrf):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     try:
         create_oidc_provider(
@@ -623,8 +623,8 @@ def oidc_provider_create(
 
 
 @app.post("/settings/oidc/{provider_id}/toggle", response_class=HTMLResponse)
-def oidc_provider_toggle(request: Request, provider_id: int, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def oidc_provider_toggle(request: Request, provider_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     from app.database import get_db
     with get_db() as conn:
@@ -635,8 +635,8 @@ def oidc_provider_toggle(request: Request, provider_id: int, _csrf: str = Form("
 
 
 @app.post("/settings/oidc/{provider_id}/delete", response_class=HTMLResponse)
-def oidc_provider_delete(request: Request, provider_id: int, _csrf: str = Form("")):
-    if not validate_csrf_token(request.session, _csrf):
+def oidc_provider_delete(request: Request, provider_id: int, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     delete_oidc_provider(provider_id)
     return RedirectResponse("/settings?saved=oidc#oidc", status_code=303)
