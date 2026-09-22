@@ -103,6 +103,18 @@
   <div class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2.5 rounded-lg">
     Der Import ist abgelaufen. Bitte Datei erneut hochladen.
   </div>
+  {% elif error == '2fa_required_export' %}
+  <div class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2.5 rounded-lg">
+    Zugangsdaten können nur exportiert werden, wenn 2FA aktiviert ist.
+  </div>
+  {% elif error == 'wrong_code' %}
+  <div class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2.5 rounded-lg">
+    Ungültiger 2FA-Code.
+  </div>
+  {% elif error == 'rate_limited' %}
+  <div class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2.5 rounded-lg">
+    Zu viele Fehlversuche. Bitte 5 Minuten warten.
+  </div>
   {% endif %}
 
   {# ── API Keys ─────────────────────────────────────────────────────────────── #}
@@ -221,8 +233,9 @@
         <div class="flex gap-2">
           <input :type="showClaudeKey ? 'text' : 'password'"
                  name="claude_api_key"
-                 value="{{ claude_api_key_full or '' }}"
-                 placeholder="sk-ant-..."
+                 value=""
+                 placeholder="{{ 'gespeichert — zum Ändern neuen Key eingeben' if claude_api_key_set else 'sk-ant-...' }}"
+                 autocomplete="off"
                  class="field-input flex-1 font-mono text-xs">
           <button type="button" @click="showClaudeKey = !showClaudeKey"
                   class="btn-secondary text-xs shrink-0"
@@ -230,6 +243,7 @@
           </button>
         </div>
         <span class="field-hint">
+          {% if claude_api_key_set %}Ein Key ist gespeichert und wird aus Sicherheitsgründen nicht angezeigt. Leer lassen, um ihn zu behalten.{% endif %}
           Erhältlich unter <a href="https://console.anthropic.com/settings/keys" target="_blank" rel="noopener" class="text-blue-500 hover:underline">console.anthropic.com</a>
         </span>
       </div>
@@ -653,14 +667,23 @@
         <form method="post" action="/settings/export/settings" class="space-y-2">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
           <label class="flex items-center gap-2 text-xs text-slate-400">
-            <input type="checkbox" name="include_credentials" x-model="incSettings">
+            <input type="checkbox" name="include_credentials" x-model="incSettings" {% if not totp_enabled %}disabled{% endif %}>
             Zugangsdaten (Passwort, 2FA, Passkeys, MCP-Token) einschließen
           </label>
+          {% if not totp_enabled %}
+          <p class="text-xs text-slate-500 -mt-1">
+            Erfordert aktivierte <a href="#security" class="text-blue-500 hover:underline">Zwei-Faktor-Authentifizierung</a>.
+          </p>
+          {% else %}
           <p x-show="incSettings" x-cloak class="text-xs text-amber-500 -mt-1">
             Datei anschließend wie ein Passwort behandeln — sie ermöglicht die Anmeldung als Admin.
           </p>
           <input x-show="incSettings" x-cloak type="password" name="current_password"
                  placeholder="Aktuelles Passwort" class="field-input text-sm">
+          <input x-show="incSettings" x-cloak type="text" name="totp_code"
+                 placeholder="2FA-Code" autocomplete="one-time-code"
+                 class="field-input text-sm font-mono tracking-wider" maxlength="6">
+          {% endif %}
           <button type="submit" class="btn-secondary text-xs w-full">Exportieren</button>
         </form>
 
