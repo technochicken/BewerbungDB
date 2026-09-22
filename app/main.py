@@ -704,8 +704,7 @@ def settings_page(request: Request):
 
     return templates.TemplateResponse("settings.html", {
         "request": request,
-        "claude_api_key": ck[:8] + "••••••••" if len(ck) > 8 else ck,
-        "claude_api_key_full": ck,
+        "claude_api_key_set": bool(ck),
         "user_gender": settings_get("user_gender") or "männlich",
         "mcp_token": mcp_token,
         "saved": request.query_params.get("saved"),
@@ -898,15 +897,25 @@ def export_settings(
     request: Request,
     include_credentials: str = Form(""),
     current_password: str = Form(""),
+    totp_code: str = Form(""),
     csrf: str = Form(""),
 ):
     if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
     want_credentials = include_credentials == "on"
     if want_credentials:
+        if not get_totp_enabled():
+            return RedirectResponse("/settings?error=2fa_required_export#danger-zone", status_code=303)
+        if is_rate_limited(request):
+            return RedirectResponse("/settings?error=rate_limited#danger-zone", status_code=303)
         stored = get_password_hash()
         if not stored or not verify_password(current_password, stored):
+            record_failed(request)
             return RedirectResponse("/settings?error=wrong_password#danger-zone", status_code=303)
+        if not verify_totp_code(totp_code):
+            record_failed(request)
+            return RedirectResponse("/settings?error=wrong_code#danger-zone", status_code=303)
+        clear_failed(request)
     return _export_response("settings", export_settings_data(include_credentials=want_credentials))
 
 
