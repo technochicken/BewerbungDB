@@ -37,6 +37,22 @@
   <div class="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-2.5 rounded-lg">
     SSO-Provider wurde aktualisiert.
   </div>
+  {% elif saved == '2fa' %}
+  <div class="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-2.5 rounded-lg">
+    Zwei-Faktor-Authentifizierung wurde aktiviert.
+  </div>
+  {% elif saved == '2fa_disabled' %}
+  <div class="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-2.5 rounded-lg">
+    Zwei-Faktor-Authentifizierung wurde deaktiviert.
+  </div>
+  {% elif saved == '2fa_codes' %}
+  <div class="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-2.5 rounded-lg">
+    Neue Backup-Codes wurden generiert. Alte Codes sind ungültig.
+  </div>
+  {% elif saved == 'passkey' %}
+  <div class="bg-green-50 border border-green-200 text-green-800 text-sm px-4 py-2.5 rounded-lg">
+    Passkey wurde entfernt.
+  </div>
   {% endif %}
 
   {% if error == 'wrong_password' %}
@@ -54,6 +70,10 @@
   {% elif error == 'oidc_exists' %}
   <div class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2.5 rounded-lg">
     Ein Provider mit diesem Namen existiert bereits.
+  </div>
+  {% elif error == '2fa_code' %}
+  <div class="bg-red-50 border border-red-200 text-red-700 text-sm px-4 py-2.5 rounded-lg">
+    Ungültiger Code. Bitte erneut versuchen.
   </div>
   {% endif %}
 
@@ -378,6 +398,175 @@
     </form>
   </div>
 
+  {# ── Two-Factor Authentication (TOTP) ─────────────────────────────────────── #}
+  <div id="security" class="bg-white rounded-lg border border-slate-200 shadow-sm p-5 space-y-4">
+    <div>
+      <h2 class="font-semibold text-slate-700">Zwei-Faktor-Authentifizierung (2FA)</h2>
+      <p class="text-xs text-slate-400 mt-0.5">
+        Optionaler zweiter Faktor per Authenticator-App (TOTP) beim Passwort-Login.
+      </p>
+    </div>
+
+    {# New backup codes flash #}
+    {% if flash_backup_codes %}
+    <div x-data="{ copied: false }" class="rounded-lg p-3" style="background:#052e16; border:1px solid #166534;">
+      <p class="text-xs font-semibold text-green-300 mb-2">
+        ✓ Backup-Codes — jetzt sichern, werden nicht wieder angezeigt. Jeder Code funktioniert einmal.
+      </p>
+      <div class="grid grid-cols-2 gap-1 mb-2">
+        {% for c in flash_backup_codes %}
+        <code class="text-xs font-mono text-green-200 select-all">{{ c }}</code>
+        {% endfor %}
+      </div>
+      <button @click="navigator.clipboard.writeText('{{ flash_backup_codes | join('\n') }}'); copied = true; setTimeout(() => copied = false, 2000)"
+              class="text-xs px-2 py-1 rounded transition-colors"
+              style="background:#166534; color:#bbf7d0; border:1px solid #15803d;"
+              x-text="copied ? '✓ Kopiert' : 'Alle kopieren'"></button>
+    </div>
+    {% endif %}
+
+    {% if totp_enabled %}
+    <div class="flex items-center gap-2 text-sm">
+      <span class="px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-700">aktiviert</span>
+      <span class="text-slate-400 text-xs">{{ backup_codes_remaining }} unbenutzte Backup-Codes übrig</span>
+    </div>
+
+    <div class="flex flex-wrap gap-2" x-data="{ showRegen: false, showDisable: false }">
+      <button @click="showRegen = !showRegen; showDisable = false" type="button" class="btn-secondary text-xs">
+        Backup-Codes neu generieren
+      </button>
+      <button @click="showDisable = !showDisable; showRegen = false" type="button" class="btn-danger text-xs">
+        2FA deaktivieren
+      </button>
+
+      <form x-show="showRegen" x-cloak method="post" action="/settings/2fa/regenerate-backup-codes"
+            class="w-full flex gap-2 items-end mt-2">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <div class="flex-1">
+          <label class="field-label">Aktuelles Passwort zur Bestätigung</label>
+          <input type="password" name="current_password" required class="field-input text-sm">
+        </div>
+        <button type="submit" class="btn-primary text-xs shrink-0">Generieren</button>
+      </form>
+
+      <form x-show="showDisable" x-cloak method="post" action="/settings/2fa/disable"
+            class="w-full flex gap-2 items-end mt-2"
+            onsubmit="return confirm('2FA wirklich deaktivieren? Alle Backup-Codes werden ungültig.')">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <div class="flex-1">
+          <label class="field-label">Aktuelles Passwort zur Bestätigung</label>
+          <input type="password" name="current_password" required class="field-input text-sm">
+        </div>
+        <button type="submit" class="btn-danger text-xs shrink-0">Deaktivieren</button>
+      </form>
+    </div>
+
+    {% elif totp_setup %}
+    <div class="space-y-3">
+      <p class="text-sm text-slate-300">
+        QR-Code mit der Authenticator-App scannen (z.B. Google Authenticator, Aegis, 1Password),
+        dann den 6-stelligen Code eingeben, um 2FA zu aktivieren.
+      </p>
+      <div class="bg-white inline-block p-3 rounded-lg" style="width:200px; height:200px;">
+        {{ totp_setup.qr_svg | safe }}
+      </div>
+      <div>
+        <label class="field-label">Manueller Schlüssel (falls Scannen nicht möglich)</label>
+        <code class="text-xs font-mono text-slate-300 select-all break-all">{{ totp_setup.secret }}</code>
+      </div>
+      <form method="post" action="/settings/2fa/confirm-setup" class="flex gap-2 items-end">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <div class="flex-1 max-w-[160px]">
+          <label class="field-label">Code aus App</label>
+          <input type="text" name="code" required autocomplete="one-time-code" placeholder="123456"
+                 class="field-input text-sm font-mono tracking-wider">
+        </div>
+        <button type="submit" class="btn-primary text-xs shrink-0">2FA aktivieren</button>
+      </form>
+      <form method="post" action="/settings/2fa/cancel-setup">
+        <input type="hidden" name="csrf" value="{{ csrf_token }}">
+        <button type="submit" class="text-xs text-slate-500 hover:text-slate-300">Abbrechen</button>
+      </form>
+    </div>
+
+    {% else %}
+    <form method="post" action="/settings/2fa/start-setup">
+      <input type="hidden" name="csrf" value="{{ csrf_token }}">
+      <button type="submit" class="btn-primary text-xs">2FA aktivieren</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {# ── Passkeys / trusted devices ───────────────────────────────────────────── #}
+  <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-5 space-y-4"
+       x-data="{ showAdd: false, deviceName: '', busy: false, errMsg: '' }">
+    <div>
+      <h2 class="font-semibold text-slate-700">Vertrauenswürdige Geräte (Passkeys)</h2>
+      <p class="text-xs text-slate-400 mt-0.5">
+        Ein registrierter Passkey erlaubt die Anmeldung auf diesem Gerät ohne Passwort und ohne 2FA-Code.
+        Geräte können jederzeit hier entfernt werden.
+      </p>
+    </div>
+
+    {% if webauthn_credentials %}
+    <div class="overflow-x-auto">
+      <table class="w-full text-xs text-slate-600">
+        <thead>
+          <tr class="border-b border-slate-200 text-slate-500 text-left">
+            <th class="pb-2 font-medium">Gerät</th>
+            <th class="pb-2 font-medium">Registriert</th>
+            <th class="pb-2 font-medium">Zuletzt genutzt</th>
+            <th class="pb-2 font-medium"></th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-slate-100">
+          {% for cred in webauthn_credentials %}
+          <tr>
+            <td class="py-2 font-medium text-slate-700">{{ cred.name }}</td>
+            <td class="py-2 text-slate-400">{{ cred.created_at[:10] }}</td>
+            <td class="py-2 text-slate-400">{{ cred.last_used_at[:10] if cred.last_used_at else '—' }}</td>
+            <td class="py-2 flex justify-end">
+              <form method="post" action="/settings/passkeys/{{ cred.id }}/delete"
+                    onsubmit="return confirm('Passkey \'{{ cred.name }}\' entfernen?')">
+                <input type="hidden" name="csrf" value="{{ csrf_token }}">
+                <button type="submit" class="text-xs px-2 py-0.5 rounded border border-red-300 text-red-700 hover:bg-red-50">
+                  Entfernen
+                </button>
+              </form>
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% else %}
+    <p class="text-xs text-slate-400">Noch keine Passkeys registriert.</p>
+    {% endif %}
+
+    <div id="passkey-unsupported" hidden class="text-xs text-amber-500">
+      Dieser Browser unterstützt keine Passkeys.
+    </div>
+
+    <div id="passkey-add-wrap">
+      <button @click="showAdd = !showAdd" type="button"
+              class="text-xs font-medium text-blue-600 hover:text-blue-500"
+              x-text="showAdd ? '− Formular schließen' : '+ Passkey hinzufügen'">
+      </button>
+
+      <div x-show="showAdd" x-cloak class="mt-3 flex gap-2 items-end">
+        <div class="flex-1 max-w-xs">
+          <label class="field-label">Gerätename</label>
+          <input type="text" x-model="deviceName" placeholder="z.B. MacBook Chrome" class="field-input text-sm">
+        </div>
+        <button type="button" class="btn-primary text-xs shrink-0" :disabled="busy"
+                @click="registerPasskey($data)">
+          <span x-text="busy ? 'Registriere…' : 'Passkey registrieren'"></span>
+        </button>
+      </div>
+      <p x-show="errMsg" x-text="errMsg" class="text-xs text-red-400 mt-2"></p>
+    </div>
+  </div>
+
   {# ── Password ─────────────────────────────────────────────────────────────── #}
   <div class="bg-white rounded-lg border border-slate-200 shadow-sm p-5">
     <h2 class="font-semibold text-slate-700 mb-4">Passwort ändern</h2>
@@ -416,12 +605,49 @@
 
 <script>
 const oidcPresets = {{ oidc_presets | tojson }};
+const CSRF_TOKEN = {{ csrf_token | tojson }};
 
 function discoveryHint(type) {
   return oidcPresets[type]?.discovery_hint ?? 'https://provider.example.com/.well-known/openid-configuration';
 }
 function defaultScopes(type) {
   return oidcPresets[type]?.scopes ?? 'openid profile email';
+}
+
+if (!window.PublicKeyCredential || !PublicKeyCredential.parseCreationOptionsFromJSON) {
+  const unsupported = document.getElementById('passkey-unsupported');
+  const addWrap = document.getElementById('passkey-add-wrap');
+  if (unsupported) unsupported.hidden = false;
+  if (addWrap) addWrap.hidden = true;
+}
+
+async function registerPasskey(scope) {
+  scope.errMsg = '';
+  scope.busy = true;
+  try {
+    const optRes = await fetch('/settings/passkeys/register-options');
+    if (!optRes.ok) throw new Error('options');
+    const optionsJSON = await optRes.json();
+    const creationOptions = PublicKeyCredential.parseCreationOptionsFromJSON(optionsJSON);
+    const credential = await navigator.credentials.create({ publicKey: creationOptions });
+    const credentialJSON = credential.toJSON();
+
+    const verifyRes = await fetch('/settings/passkeys/register-verify', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        credential: credentialJSON,
+        name: scope.deviceName || 'Unbenanntes Gerät',
+        csrf: CSRF_TOKEN,
+      }),
+    });
+    if (!verifyRes.ok) throw new Error('verify');
+    window.location.reload();
+  } catch (e) {
+    scope.busy = false;
+    if (e && e.name === 'NotAllowedError') return;
+    scope.errMsg = 'Passkey-Registrierung fehlgeschlagen.';
+  }
 }
 </script>
 {% endblock %}
