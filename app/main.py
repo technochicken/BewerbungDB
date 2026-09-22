@@ -23,8 +23,8 @@ from webauthn.helpers.structs import (
     UserVerificationRequirement,
 )
 
-from fastapi import BackgroundTasks, FastAPI, Request, Form, HTTPException, Query
-from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
+from fastapi import BackgroundTasks, FastAPI, Request, Form, HTTPException, Query, UploadFile, File
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from pathlib import Path
@@ -42,14 +42,18 @@ from app.auth import (
     get_webauthn_user_id, list_webauthn_credentials, list_webauthn_credential_ids,
     get_webauthn_credential_by_cred_id, create_webauthn_credential,
     update_webauthn_credential_usage, delete_webauthn_credential,
+    reset_settings_data, export_settings_data, describe_settings_import, import_settings_data,
 )
 from app.auth_oidc import (
     list_oidc_providers, get_oidc_provider, get_oidc_provider_by_name,
     create_oidc_provider, update_oidc_provider, delete_oidc_provider,
     build_auth_url, exchange_code, get_user_info, PROVIDER_PRESETS,
 )
-from app.config import POLL_INTERVAL_SECS, URL_CHECK_INTERVAL_SECS, SESSION_SECRET, APP_BASE_URL
-from app.database import get_db, get_job_with_tags, init_db, record_history
+from app.config import POLL_INTERVAL_SECS, URL_CHECK_INTERVAL_SECS, SESSION_SECRET, APP_BASE_URL, DATA_DIR
+from app.database import (
+    get_db, get_job_with_tags, init_db, record_history,
+    reset_jobs_data, export_jobs_data, describe_jobs_import, import_jobs_data,
+)
 from app.models import ALL_STATUSES, STATUS_COLORS
 from app.api.jobs import router as jobs_router, SORT_MAP
 from app.api.searches import router as searches_router
@@ -62,6 +66,36 @@ logger = logging.getLogger(__name__)
 WEBAUTHN_RP_ID   = urlparse(APP_BASE_URL).hostname or "localhost"
 WEBAUTHN_RP_NAME = "BewerbungsDB"
 WEBAUTHN_ORIGIN  = APP_BASE_URL
+
+
+DANGER_ACTIONS = {
+    "reset-db":        {"title": "Datenbank zurücksetzen",   "kind": "reset",  "scope": "db"},
+    "reset-settings":  {"title": "Einstellungen zurücksetzen", "kind": "reset",  "scope": "settings"},
+    "import-db":       {"title": "Datenbank importieren",    "kind": "import", "scope": "db"},
+    "import-settings": {"title": "Einstellungen importieren", "kind": "import", "scope": "settings"},
+}
+
+IMPORT_TMP_DIR = DATA_DIR / "tmp_imports"
+IMPORT_TMP_DIR.mkdir(parents=True, exist_ok=True)
+MAX_IMPORT_SIZE = 20 * 1024 * 1024
+
+
+def _danger_challenge_key(action: str) -> str:
+    return f"danger_challenge_{action}"
+
+
+def _pending_import_key(scope: str) -> str:
+    return f"pending_import_{scope}"
+
+
+def _cleanup_stale_imports() -> None:
+    cutoff = time.time() - 3600
+    for f in IMPORT_TMP_DIR.glob("*.json"):
+        try:
+            if f.stat().st_mtime < cutoff:
+                f.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _totp_qr_svg(otpauth_uri: str) -> str:
@@ -645,6 +679,7 @@ async def oidc_callback(
 
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
+    _cleanup_stale_imports()
     ck = settings_get("claude_api_key") or ""
     mcp_token = settings_get("mcp_token") or ""
     new_key = request.session.pop("flash_new_key", None)
@@ -825,6 +860,189 @@ def passkey_delete(request: Request, cred_id: int, csrf: str = Form("")):
         raise HTTPException(403, "Invalid CSRF token")
     delete_webauthn_credential(cred_id)
     return RedirectResponse("/settings?saved=passkey#security", status_code=303)
+
+
+# ─── Export ─────────────────────────────────────────────────────────────────
+
+def _export_response(scope: str, data: dict) -> Response:
+    payload = {
+        "exported_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "scope": scope,
+        "data": data,
+    }
+    fname = f"bewerbungsdb-{scope}-{datetime.now(timezone.utc).strftime('%Y%m%d-%H%M%S')}.json"
+    return Response(
+        content=json.dumps(payload, ensure_ascii=False, indent=2),
+        media_type="application/json",
+        headers={"Content-Disposition": f'attachment; filename="{fname}"'},
+    )
+
+
+@app.post("/settings/export/db")
+def export_db(request: Request, csrf: str = Form("")):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    return _export_response("db", export_jobs_data())
+
+
+@app.post("/settings/export/settings")
+def export_settings(
+    request: Request,
+    include_credentials: str = Form(""),
+    current_password: str = Form(""),
+    csrf: str = Form(""),
+):
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    want_credentials = include_credentials == "on"
+    if want_credentials:
+        stored = get_password_hash()
+        if not stored or not verify_password(current_password, stored):
+            return RedirectResponse("/settings?error=wrong_password#danger-zone", status_code=303)
+    return _export_response("settings", export_settings_data(include_credentials=want_credentials))
+
+
+# ─── Import upload (stages a file, then requires the danger-zone ceremony) ───
+
+@app.post("/settings/import/{scope}/upload", response_class=HTMLResponse)
+async def import_upload(
+    request: Request, scope: str, file: UploadFile = File(...), csrf: str = Form("")
+):
+    if scope not in ("db", "settings"):
+        raise HTTPException(404)
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+
+    raw = await file.read()
+    if len(raw) > MAX_IMPORT_SIZE:
+        return RedirectResponse("/settings?error=import_too_large#danger-zone", status_code=303)
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict) or parsed.get("scope") != scope:
+            raise ValueError("scope mismatch")
+        data = parsed["data"]
+        if not isinstance(data, dict):
+            raise ValueError("bad data")
+    except Exception:
+        return RedirectResponse("/settings?error=import_invalid#danger-zone", status_code=303)
+
+    old_token = request.session.get(_pending_import_key(scope))
+    if old_token:
+        (IMPORT_TMP_DIR / f"{old_token}.json").unlink(missing_ok=True)
+    token = secrets.token_hex(16)
+    (IMPORT_TMP_DIR / f"{token}.json").write_text(json.dumps(data))
+    request.session[_pending_import_key(scope)] = token
+
+    return RedirectResponse(f"/settings/danger/import-{scope}/confirm", status_code=303)
+
+
+# ─── Danger zone: reset / import confirmation (password + TOTP + typed phrase) ─
+
+@app.get("/settings/danger/{action}/confirm", response_class=HTMLResponse)
+def danger_confirm_page(request: Request, action: str):
+    meta = DANGER_ACTIONS.get(action)
+    if not meta:
+        raise HTTPException(404)
+
+    import_summary = None
+    if meta["kind"] == "import":
+        token = request.session.get(_pending_import_key(meta["scope"]))
+        path = IMPORT_TMP_DIR / f"{token}.json" if token else None
+        if not token or not path.exists():
+            request.session.pop(_pending_import_key(meta["scope"]), None)
+            return RedirectResponse("/settings?error=import_expired#danger-zone", status_code=303)
+        try:
+            data = json.loads(path.read_text())
+        except Exception:
+            request.session.pop(_pending_import_key(meta["scope"]), None)
+            path.unlink(missing_ok=True)
+            return RedirectResponse("/settings?error=import_invalid#danger-zone", status_code=303)
+        import_summary = (
+            describe_jobs_import(data) if meta["scope"] == "db" else describe_settings_import(data)
+        )
+
+    totp_enabled = get_totp_enabled()
+    challenge = None
+    if totp_enabled:
+        challenge = "".join(secrets.choice("abcdefghjkmnpqrstuvwxyz23456789") for _ in range(10))
+        request.session[_danger_challenge_key(action)] = challenge
+
+    return templates.TemplateResponse("danger_confirm.html", {
+        "request": request,
+        "action": action,
+        "meta": meta,
+        "totp_enabled": totp_enabled,
+        "challenge": challenge,
+        "import_summary": import_summary,
+        "error": request.query_params.get("error"),
+        "csrf_token": generate_csrf_token(request.session),
+    })
+
+
+@app.post("/settings/danger/{action}/confirm", response_class=HTMLResponse)
+def danger_confirm_submit(
+    request: Request,
+    action: str,
+    current_password: str = Form(...),
+    totp_code: str = Form(""),
+    phrase: str = Form(...),
+    csrf: str = Form(""),
+):
+    meta = DANGER_ACTIONS.get(action)
+    if not meta:
+        raise HTTPException(404)
+    if not validate_csrf_token(request.session, csrf):
+        raise HTTPException(403, "Invalid CSRF token")
+    if not get_totp_enabled():
+        return RedirectResponse("/settings#security", status_code=303)
+
+    def fail(reason: str):
+        request.session.pop(_danger_challenge_key(action), None)
+        return RedirectResponse(f"/settings/danger/{action}/confirm?error={reason}", status_code=303)
+
+    if is_rate_limited(request):
+        return fail("rate_limited")
+
+    stored = get_password_hash()
+    if not stored or not verify_password(current_password, stored):
+        record_failed(request)
+        return fail("wrong_password")
+
+    if not verify_totp_code(totp_code):
+        record_failed(request)
+        return fail("wrong_code")
+
+    expected = request.session.get(_danger_challenge_key(action))
+    if not expected or not secrets.compare_digest((phrase or "").strip(), expected):
+        record_failed(request)
+        return fail("wrong_phrase")
+
+    clear_failed(request)
+    request.session.pop(_danger_challenge_key(action), None)
+
+    if meta["kind"] == "reset":
+        if meta["scope"] == "db":
+            reset_jobs_data()
+        else:
+            reset_settings_data()
+        return RedirectResponse(f"/settings?saved=reset_{meta['scope']}#danger-zone", status_code=303)
+
+    # import
+    scope = meta["scope"]
+    token = request.session.pop(_pending_import_key(scope), None)
+    if not token:
+        return RedirectResponse("/settings#danger-zone", status_code=303)
+    path = IMPORT_TMP_DIR / f"{token}.json"
+    try:
+        data = json.loads(path.read_text())
+        if scope == "db":
+            import_jobs_data(data)
+        else:
+            import_settings_data(data)
+    finally:
+        path.unlink(missing_ok=True)
+
+    return RedirectResponse(f"/settings?saved=import_{scope}#danger-zone", status_code=303)
 
 
 @app.post("/settings/regenerate-mcp-token", response_class=HTMLResponse)

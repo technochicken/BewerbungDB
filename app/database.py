@@ -204,6 +204,62 @@ def get_job_with_tags(conn, job_id: int):
     return d
 
 
+def _insert_rows(conn, table: str, rows: list[dict]) -> None:
+    """Bulk-insert dict rows into table, preserving whatever columns each row has
+    (so an older export missing newer columns still imports cleanly)."""
+    if not rows:
+        return
+    cols = list(rows[0].keys())
+    col_list = ", ".join(cols)
+    placeholders = ", ".join("?" for _ in cols)
+    conn.executemany(
+        f"INSERT INTO {table} ({col_list}) VALUES ({placeholders})",
+        [tuple(r.get(c) for c in cols) for r in rows],
+    )
+
+
+# ── DB reset / export / import (jobs + related data) ───────────────────────────
+
+def reset_jobs_data() -> None:
+    """Wipe all job/search/alert data. Does not touch settings, auth, or passkeys."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM jobs")  # cascades to job_tags, job_history
+        conn.execute("DELETE FROM search_configs")
+        conn.execute("DELETE FROM alert_configs")
+
+
+def export_jobs_data() -> dict:
+    with get_db() as conn:
+        return {
+            "jobs":           [dict(r) for r in conn.execute("SELECT * FROM jobs").fetchall()],
+            "job_tags":       [dict(r) for r in conn.execute("SELECT * FROM job_tags").fetchall()],
+            "job_history":    [dict(r) for r in conn.execute("SELECT * FROM job_history").fetchall()],
+            "search_configs": [dict(r) for r in conn.execute("SELECT * FROM search_configs").fetchall()],
+            "alert_configs":  [dict(r) for r in conn.execute("SELECT * FROM alert_configs").fetchall()],
+        }
+
+
+def describe_jobs_import(data: dict) -> dict:
+    return {
+        "jobs":           len(data.get("jobs", [])),
+        "search_configs": len(data.get("search_configs", [])),
+        "alert_configs":  len(data.get("alert_configs", [])),
+    }
+
+
+def import_jobs_data(data: dict) -> None:
+    """Replace all job/search/alert data with the given export bundle."""
+    with get_db() as conn:
+        conn.execute("DELETE FROM jobs")  # cascades to job_tags, job_history
+        conn.execute("DELETE FROM search_configs")
+        conn.execute("DELETE FROM alert_configs")
+        _insert_rows(conn, "jobs", data.get("jobs", []))
+        _insert_rows(conn, "job_tags", data.get("job_tags", []))
+        _insert_rows(conn, "job_history", data.get("job_history", []))
+        _insert_rows(conn, "search_configs", data.get("search_configs", []))
+        _insert_rows(conn, "alert_configs", data.get("alert_configs", []))
+
+
 def record_history(conn, job_id: int, field: str, old_val, new_val, now: str):
     old_s = str(old_val) if old_val is not None else None
     new_s = str(new_val) if new_val is not None else None

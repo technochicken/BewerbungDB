@@ -377,6 +377,86 @@ def delete_webauthn_credential(cred_row_id: int) -> None:
         conn.execute("DELETE FROM webauthn_credentials WHERE id = ?", (cred_row_id,))
 
 
+# ── Settings reset / export / import ──────────────────────────────────────────
+# "Settings" = integrations/config (API keys, OIDC providers, Claude key, MCP
+# token, preferences). Login credentials (password, TOTP, passkeys) are never
+# touched by reset, and are only included in export/import when explicitly
+# opted in — they have their own dedicated management UI elsewhere.
+
+_SETTINGS_CREDENTIAL_KEYS = {"password_hash", "totp_secret", "totp_enabled", "webauthn_user_id"}
+_SETTINGS_RESET_KEYS = {"claude_api_key", "user_gender"}
+
+
+def reset_settings_data() -> None:
+    from app.database import get_db
+    with get_db() as conn:
+        conn.execute("DELETE FROM api_keys")
+        conn.execute("DELETE FROM oidc_providers")
+        placeholders = ", ".join("?" for _ in _SETTINGS_RESET_KEYS)
+        conn.execute(f"DELETE FROM app_settings WHERE key IN ({placeholders})", tuple(_SETTINGS_RESET_KEYS))
+    _set("mcp_token", secrets.token_urlsafe(32))
+
+
+def export_settings_data(include_credentials: bool) -> dict:
+    from app.database import get_db
+    with get_db() as conn:
+        app_settings = {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM app_settings").fetchall()}
+        api_keys = [dict(r) for r in conn.execute("SELECT * FROM api_keys").fetchall()]
+        oidc_providers = [dict(r) for r in conn.execute("SELECT * FROM oidc_providers").fetchall()]
+        backup_codes = [dict(r) for r in conn.execute("SELECT * FROM totp_backup_codes").fetchall()]
+        webauthn_creds = [dict(r) for r in conn.execute("SELECT * FROM webauthn_credentials").fetchall()]
+
+    if not include_credentials:
+        for k in _SETTINGS_CREDENTIAL_KEYS:
+            app_settings.pop(k, None)
+        backup_codes = []
+        webauthn_creds = []
+
+    return {
+        "includes_credentials": include_credentials,
+        "app_settings": app_settings,
+        "api_keys": api_keys,
+        "oidc_providers": oidc_providers,
+        "totp_backup_codes": backup_codes,
+        "webauthn_credentials": webauthn_creds,
+    }
+
+
+def describe_settings_import(data: dict) -> dict:
+    return {
+        "api_keys": len(data.get("api_keys", [])),
+        "oidc_providers": len(data.get("oidc_providers", [])),
+        "includes_credentials": bool(data.get("includes_credentials")),
+    }
+
+
+def import_settings_data(data: dict) -> None:
+    """Replace api_keys/oidc_providers/non-credential app_settings from the bundle.
+    Only touches password/2FA/passkeys if the bundle explicitly includes them —
+    otherwise this device's own login stays exactly as it was."""
+    from app.database import get_db, _insert_rows
+    app_settings = data.get("app_settings", {})
+    includes_credentials = bool(data.get("includes_credentials"))
+    with get_db() as conn:
+        conn.execute("DELETE FROM api_keys")
+        conn.execute("DELETE FROM oidc_providers")
+        for k, v in app_settings.items():
+            if not includes_credentials and k in _SETTINGS_CREDENTIAL_KEYS:
+                continue
+            conn.execute(
+                "INSERT INTO app_settings (key, value) VALUES (?, ?) "
+                "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                (k, v),
+            )
+        _insert_rows(conn, "api_keys", data.get("api_keys", []))
+        _insert_rows(conn, "oidc_providers", data.get("oidc_providers", []))
+        if includes_credentials:
+            conn.execute("DELETE FROM totp_backup_codes")
+            conn.execute("DELETE FROM webauthn_credentials")
+            _insert_rows(conn, "totp_backup_codes", data.get("totp_backup_codes", []))
+            _insert_rows(conn, "webauthn_credentials", data.get("webauthn_credentials", []))
+
+
 # ── API key FastAPI dependency ────────────────────────────────────────────────
 
 async def require_api_key(
