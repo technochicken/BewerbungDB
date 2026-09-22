@@ -80,6 +80,14 @@ IMPORT_TMP_DIR.mkdir(parents=True, exist_ok=True)
 MAX_IMPORT_SIZE = 20 * 1024 * 1024
 
 
+def _safe_next(url) -> str:
+    """Only allow same-origin, path-absolute redirect targets — rejects
+    protocol-relative URLs like //evil.com that browsers treat as external."""
+    if isinstance(url, str) and url.startswith("/") and not url.startswith("//") and not url.startswith("/\\"):
+        return url
+    return "/"
+
+
 def _danger_challenge_key(action: str) -> str:
     return f"danger_challenge_{action}"
 
@@ -478,7 +486,7 @@ async def login_submit(
     stored = get_password_hash()
     if stored and verify_password(password, stored):
         clear_failed(request)
-        next_url = next if next.startswith("/") else "/"
+        next_url = _safe_next(next)
         if get_totp_enabled():
             request.session["totp_pending"] = True
             request.session["login_next"] = next_url
@@ -564,7 +572,7 @@ def passkey_login_options(request: Request):
             PublicKeyCredentialDescriptor(id=webauthn.base64url_to_bytes(cid))
             for cid in cred_ids
         ],
-        user_verification=UserVerificationRequirement.PREFERRED,
+        user_verification=UserVerificationRequirement.REQUIRED,
     )
     request.session["webauthn_auth_challenge"] = webauthn.helpers.bytes_to_base64url(options.challenge)
     return JSONResponse(content=json.loads(webauthn.options_to_json(options)))
@@ -577,9 +585,7 @@ async def passkey_login_verify(request: Request):
 
     body = await request.json()
     credential = body.get("credential")
-    next_url = body.get("next") or "/"
-    if not isinstance(next_url, str) or not next_url.startswith("/"):
-        next_url = "/"
+    next_url = _safe_next(body.get("next"))
 
     challenge_str = request.session.pop("webauthn_auth_challenge", None)
     if not challenge_str or not credential:
@@ -600,6 +606,7 @@ async def passkey_login_verify(request: Request):
             expected_origin=WEBAUTHN_ORIGIN,
             credential_public_key=base64.b64decode(stored["public_key"]),
             credential_current_sign_count=stored["sign_count"],
+            require_user_verification=True,
         )
     except Exception as e:
         logger.warning(f"Passkey login verify failed: {e}")
@@ -672,7 +679,7 @@ async def oidc_callback(
     request.session["authenticated"] = True
     if request.session.get("oauth_pending"):
         return RedirectResponse("/oauth/complete", status_code=303)
-    return RedirectResponse(next_url if next_url.startswith("/") else "/", status_code=303)
+    return RedirectResponse(_safe_next(next_url), status_code=303)
 
 
 # ─── Settings ─────────────────────────────────────────────────────────────────
@@ -815,7 +822,7 @@ def passkey_register_options(request: Request):
         ],
         authenticator_selection=AuthenticatorSelectionCriteria(
             resident_key=ResidentKeyRequirement.DISCOURAGED,
-            user_verification=UserVerificationRequirement.PREFERRED,
+            user_verification=UserVerificationRequirement.REQUIRED,
         ),
     )
     request.session["webauthn_reg_challenge"] = webauthn.helpers.bytes_to_base64url(options.challenge)
@@ -840,6 +847,7 @@ async def passkey_register_verify(request: Request):
             expected_challenge=webauthn.base64url_to_bytes(challenge_str),
             expected_rp_id=WEBAUTHN_RP_ID,
             expected_origin=WEBAUTHN_ORIGIN,
+            require_user_verification=True,
         )
     except Exception as e:
         logger.warning(f"Passkey registration verify failed: {e}")

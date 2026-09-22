@@ -206,10 +206,18 @@ def get_job_with_tags(conn, job_id: int):
 
 def _insert_rows(conn, table: str, rows: list[dict]) -> None:
     """Bulk-insert dict rows into table, preserving whatever columns each row has
-    (so an older export missing newer columns still imports cleanly)."""
+    (so an older export missing newer columns still imports cleanly).
+
+    `table` is always a hardcoded literal from trusted call sites. Row keys,
+    however, come from an uploaded import file and are untrusted — they're
+    validated against the table's real columns before being interpolated into
+    SQL, so a crafted key can never inject arbitrary SQL text."""
     if not rows:
         return
-    cols = list(rows[0].keys())
+    allowed = {r[1] for r in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+    cols = [c for c in rows[0].keys() if c in allowed]
+    if not cols:
+        return
     col_list = ", ".join(cols)
     placeholders = ", ".join("?" for _ in cols)
     conn.executemany(

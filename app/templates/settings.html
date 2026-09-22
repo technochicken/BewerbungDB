@@ -629,36 +629,45 @@
       </p>
     </div>
 
-    <div class="grid sm:grid-cols-2 gap-4">
-      <div class="space-y-2">
-        <p class="text-sm font-medium text-slate-300">Datenbank (Bewerbungen, Suchen, Alerts)</p>
+    <div class="grid sm:grid-cols-2 gap-6">
+      <div class="space-y-3">
+        <p class="text-sm font-medium text-slate-300">Datenbank</p>
+        <p class="text-xs text-slate-500 -mt-2">Bewerbungen, Suchen, Alerts</p>
+
         <form method="post" action="/settings/export/db">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <button type="submit" class="btn-secondary text-xs">Exportieren</button>
+          <button type="submit" class="btn-secondary text-xs w-full">Exportieren</button>
         </form>
-        <form method="post" action="/settings/import/db/upload" enctype="multipart/form-data" class="flex gap-2">
+
+        <form method="post" action="/settings/import/db/upload" enctype="multipart/form-data" class="space-y-2 pt-1 border-t border-slate-700">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <input type="file" name="file" accept="application/json" required class="text-xs text-slate-400 flex-1">
-          <button type="submit" class="btn-secondary text-xs shrink-0">Importieren</button>
+          <input type="file" name="file" accept="application/json" required class="block w-full mt-2">
+          <button type="submit" class="btn-secondary text-xs w-full">Importieren</button>
         </form>
       </div>
 
-      <div class="space-y-2">
-        <p class="text-sm font-medium text-slate-300">Einstellungen (API-Keys, SSO, Präferenzen)</p>
+      <div class="space-y-3">
+        <p class="text-sm font-medium text-slate-300">Einstellungen</p>
+        <p class="text-xs text-slate-500 -mt-2">API-Keys, SSO, Präferenzen</p>
+
         <form method="post" action="/settings/export/settings" class="space-y-2">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
           <label class="flex items-center gap-2 text-xs text-slate-400">
             <input type="checkbox" name="include_credentials" x-model="incSettings">
-            Zugangsdaten (Passwort, 2FA, Passkeys) einschließen
+            Zugangsdaten (Passwort, 2FA, Passkeys, MCP-Token) einschließen
           </label>
+          <p x-show="incSettings" x-cloak class="text-xs text-amber-500 -mt-1">
+            Datei anschließend wie ein Passwort behandeln — sie ermöglicht die Anmeldung als Admin.
+          </p>
           <input x-show="incSettings" x-cloak type="password" name="current_password"
                  placeholder="Aktuelles Passwort" class="field-input text-sm">
-          <button type="submit" class="btn-secondary text-xs">Exportieren</button>
+          <button type="submit" class="btn-secondary text-xs w-full">Exportieren</button>
         </form>
-        <form method="post" action="/settings/import/settings/upload" enctype="multipart/form-data" class="flex gap-2">
+
+        <form method="post" action="/settings/import/settings/upload" enctype="multipart/form-data" class="space-y-2 pt-1 border-t border-slate-700">
           <input type="hidden" name="csrf" value="{{ csrf_token }}">
-          <input type="file" name="file" accept="application/json" required class="text-xs text-slate-400 flex-1">
-          <button type="submit" class="btn-secondary text-xs shrink-0">Importieren</button>
+          <input type="file" name="file" accept="application/json" required class="block w-full mt-2">
+          <button type="submit" class="btn-secondary text-xs w-full">Importieren</button>
         </form>
       </div>
     </div>

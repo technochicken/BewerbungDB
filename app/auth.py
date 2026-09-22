@@ -383,7 +383,7 @@ def delete_webauthn_credential(cred_row_id: int) -> None:
 # touched by reset, and are only included in export/import when explicitly
 # opted in — they have their own dedicated management UI elsewhere.
 
-_SETTINGS_CREDENTIAL_KEYS = {"password_hash", "totp_secret", "totp_enabled", "webauthn_user_id"}
+_SETTINGS_CREDENTIAL_KEYS = {"password_hash", "totp_secret", "totp_enabled", "webauthn_user_id", "mcp_token"}
 _SETTINGS_RESET_KEYS = {"claude_api_key", "user_gender"}
 
 
