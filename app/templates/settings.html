@@ -357,28 +357,31 @@
     </div>
 
     <div class="flex flex-wrap gap-2">
-      <a href="https://claude.ai/settings/connectors" target="_blank" rel="noopener"
+      <a href="https://claude.ai/customize/connectors?modal=add-custom-connector&mcpName=BewerbungsDB&mcpServerUrl={{ (app_base_url ~ '/mcp') | urlencode }}"
+         target="_blank" rel="noopener"
          class="text-xs px-3 py-1.5 rounded-lg transition-colors"
          style="background:#1e3a5f; color:#93c5fd; border:1px solid #1e40af;">
-        Claude.ai Connector-Einstellungen öffnen ↗
+        Zu Claude.ai hinzufügen (1 Klick) ↗
       </a>
-      <a href="https://chatgpt.com/" target="_blank" rel="noopener"
+      <a href="https://chatgpt.com/#settings/Connectors" target="_blank" rel="noopener"
          class="text-xs px-3 py-1.5 rounded-lg transition-colors"
          style="background:#1e3a5f; color:#93c5fd; border:1px solid #1e40af;">
-        ChatGPT öffnen ↗
+        ChatGPT Connectors öffnen ↗
       </a>
     </div>
     <p class="text-xs text-slate-500">
-      Beide Buttons öffnen die jeweilige Seite in einem neuen Tab — die URL oben dort unter
-      <strong class="text-slate-400">Einstellungen → Connectors → Benutzerdefinierten Connector hinzufügen</strong>
-      einfügen (bei ChatGPT nur mit Plus/Pro/Team-Account verfügbar).
+      Der Claude.ai-Button öffnet direkt den "Connector hinzufügen"-Dialog mit bereits ausgefülltem Namen und URL —
+      nur noch bestätigen und mit BewerbungsDB-Passwort anmelden. Falls Claude.ai diesen Vorab-Fülldialog einmal
+      ändert, landest du trotzdem auf der richtigen Seite und kannst die URL oben einfügen.
+      Der ChatGPT-Button öffnet direkt die Connectors-Einstellungen (nur Plus/Pro/Team) — dort die URL oben von Hand
+      einfügen, da ChatGPT (Stand jetzt) kein automatisches Ausfüllen per Link unterstützt.
     </p>
 
     <ol class="space-y-2 text-sm">
       <li class="flex gap-2">
         <span class="shrink-0 w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center mt-0.5"
               style="background:#1e3a5f; color:#93c5fd;">1</span>
-        <span class="text-slate-300">Oben verlinkte Connector-Einstellungen öffnen, URL einfügen, Connector erstellen.</span>
+        <span class="text-slate-300">Oben verlinkte Connector-Einstellungen öffnen (bei Claude.ai bereits ausgefüllt), Connector erstellen.</span>
       </li>
       <li class="flex gap-2">
         <span class="shrink-0 w-5 h-5 rounded-full text-xs font-bold flex items-center justify-center mt-0.5"
