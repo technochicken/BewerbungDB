@@ -58,6 +58,7 @@ from app.models import ALL_STATUSES, STATUS_COLORS
 from app.api.jobs import router as jobs_router, SORT_MAP
 from app.api.searches import router as searches_router
 from app.services.poller import poll_all_active, check_all_urls
+from app.services.ai_provider import PROVIDERS as AI_PROVIDERS
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -687,7 +688,6 @@ async def oidc_callback(
 @app.get("/settings", response_class=HTMLResponse)
 def settings_page(request: Request):
     _cleanup_stale_imports()
-    ck = settings_get("claude_api_key") or ""
     mcp_token = settings_get("mcp_token") or ""
     new_key = request.session.pop("flash_new_key", None)
 
@@ -704,7 +704,14 @@ def settings_page(request: Request):
 
     return templates.TemplateResponse("settings.html", {
         "request": request,
-        "claude_api_key_set": bool(ck),
+        "ai_providers": AI_PROVIDERS,
+        "ai_provider": settings_get("ai_provider") or "claude",
+        "claude_api_key_set": bool(settings_get("claude_api_key")),
+        "claude_model": settings_get("claude_model") or AI_PROVIDERS["claude"]["default_model"],
+        "openai_api_key_set": bool(settings_get("openai_api_key")),
+        "openai_model": settings_get("openai_model") or AI_PROVIDERS["openai"]["default_model"],
+        "ollama_base_url": settings_get("ollama_base_url") or AI_PROVIDERS["ollama"]["default_base_url"],
+        "ollama_model": settings_get("ollama_model") or AI_PROVIDERS["ollama"]["default_model"],
         "user_gender": settings_get("user_gender") or "männlich",
         "mcp_token": mcp_token,
         "saved": request.query_params.get("saved"),
@@ -1070,19 +1077,34 @@ def renew_mcp_token(request: Request, csrf: str = Form("")):
     return RedirectResponse("/settings?saved=mcp", status_code=303)
 
 
-@app.post("/settings/claude", response_class=HTMLResponse)
-def save_claude_settings(
+@app.post("/settings/ai", response_class=HTMLResponse)
+def save_ai_settings(
     request: Request,
+    ai_provider: str = Form("claude"),
     claude_api_key: str = Form(""),
+    claude_model: str = Form(""),
+    openai_api_key: str = Form(""),
+    openai_model: str = Form(""),
+    ollama_base_url: str = Form(""),
+    ollama_model: str = Form(""),
     user_gender: str = Form("männlich"),
     csrf: str = Form(""),
 ):
     if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
+    if ai_provider not in AI_PROVIDERS:
+        ai_provider = "claude"
+    settings_set("ai_provider", ai_provider)
     if claude_api_key.strip():
         settings_set("claude_api_key", claude_api_key.strip())
+    settings_set("claude_model", claude_model.strip() or AI_PROVIDERS["claude"]["default_model"])
+    if openai_api_key.strip():
+        settings_set("openai_api_key", openai_api_key.strip())
+    settings_set("openai_model", openai_model.strip() or AI_PROVIDERS["openai"]["default_model"])
+    settings_set("ollama_base_url", ollama_base_url.strip() or AI_PROVIDERS["ollama"]["default_base_url"])
+    settings_set("ollama_model", ollama_model.strip() or AI_PROVIDERS["ollama"]["default_model"])
     settings_set("user_gender", user_gender)
-    return RedirectResponse("/settings?saved=claude", status_code=303)
+    return RedirectResponse("/settings?saved=ai#ai-provider", status_code=303)
 
 
 # ─── API key management ───────────────────────────────────────────────────────
@@ -1697,7 +1719,7 @@ async def import_job_submit(request: Request):
 
 @app.post("/jobs/{job_id}/auto-parse")
 async def auto_parse_job_route(job_id: int):
-    from app.services.claude_ai import auto_parse_job
+    from app.services.ai_provider import auto_parse_job
     with get_db() as conn:
         job = get_job_with_tags(conn, job_id)
     if not job:
