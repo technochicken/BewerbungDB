@@ -10,7 +10,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 
 import pyotp
 import qrcode
@@ -717,6 +717,11 @@ def settings_page(request: Request):
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
         "app_base_url": APP_BASE_URL,
+        "claude_connector_url": "https://claude.ai/settings/connectors?" + urlencode({
+            "mcpName": "BewerbungsDB",
+            "mcpServerUrl": f"{APP_BASE_URL}/mcp",
+            "modal": "add-custom-connector",
+        }),
         "api_keys": list_api_keys(),
         "new_api_key": new_key,
         "oidc_providers": list_oidc_providers(),
