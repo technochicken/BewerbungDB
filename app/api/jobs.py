@@ -2,10 +2,10 @@ import json
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 
 from app.auth import require_api_key
-from app.database import get_db, get_job_with_tags, record_history
+from app.database import get_db, get_job_with_tags, record_history, new_job_id
 from app.models import JobCreate, JobUpdate
 from app.services.scraper import fetch_url, extract_text
 
@@ -28,6 +28,8 @@ JOB_FIELDS = [
 SORT_MAP = {
     "created_desc":  "j.created_at DESC",
     "created_asc":   "j.created_at ASC",
+    "updated_desc":  "j.updated_at DESC",
+    "updated_asc":   "j.updated_at ASC",
     "changed_desc":  "j.last_changed_at DESC NULLS LAST",
     "changed_asc":   "j.last_changed_at ASC NULLS LAST",
     "checked_desc":  "j.last_checked_at DESC NULLS LAST",
@@ -44,68 +46,103 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-@router.get("")
+@router.get("", summary="List jobs")
 def list_jobs(
-    status: Optional[str] = None,
-    tag: Optional[str] = None,
-    source: Optional[str] = None,
-    search: Optional[str] = None,
-    sort: str = "created_desc",
-    limit: int = Query(500, le=2000),
-    offset: int = 0,
+    response: Response,
+    status: Optional[str] = Query(None, description="Comma-separated statuses, e.g. `applied,interview`"),
+    tag: Optional[str] = Query(None, description="Only jobs with this tag"),
+    source: Optional[str] = Query(None, description="e.g. `manual`, `import`, `arbeitsagentur`"),
+    company: Optional[str] = Query(None, description="Substring match on company"),
+    location: Optional[str] = Query(None, description="Substring match on location"),
+    search: Optional[str] = Query(None, description="Substring match on title, company, location, description"),
+    created_after: Optional[str] = Query(None, description="ISO date/datetime; created_at >= value"),
+    created_before: Optional[str] = Query(None, description="ISO date/datetime; created_at < value"),
+    updated_after: Optional[str] = Query(None, description="ISO date/datetime; last edited (updated_at) >= value"),
+    updated_before: Optional[str] = Query(None, description="ISO date/datetime; updated_at < value"),
+    changed_after: Optional[str] = Query(None, description="ISO date/datetime; last_changed_at (content/status change) >= value"),
+    changed_before: Optional[str] = Query(None, description="ISO date/datetime; last_changed_at < value"),
+    checked_after: Optional[str] = Query(None, description="ISO date/datetime; last_checked_at >= value"),
+    sort: str = Query("created_desc", description="One of: " + ", ".join(SORT_MAP)),
+    limit: int = Query(500, ge=1, le=2000),
+    offset: int = Query(0, ge=0),
 ):
-    order = SORT_MAP.get(sort, "j.created_at DESC")
-    with get_db() as conn:
-        query = f"""SELECT j.*,
-                    (SELECT GROUP_CONCAT(tag ORDER BY tag) FROM job_tags WHERE job_id = j.id) as _tags
-                    FROM jobs j WHERE 1=1"""
-        params: list = []
-        if status:
-            statuses = status.split(",")
-            placeholders = ",".join("?" * len(statuses))
-            query += f" AND j.status IN ({placeholders})"
-            params.extend(statuses)
-        if source:
-            query += " AND j.source = ?"
-            params.append(source)
-        if search:
-            s = f"%{search}%"
-            query += " AND (j.title LIKE ? OR j.company LIKE ? OR j.location LIKE ? OR j.description LIKE ?)"
-            params.extend([s, s, s, s])
-        if tag:
-            query += " AND j.id IN (SELECT job_id FROM job_tags WHERE tag = ?)"
-            params.append(tag)
-        query += f" ORDER BY {order} LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
+    """Filterable job list. Dates are compared against the stored ISO-8601 UTC
+    timestamps, so `2026-09-24` or `2026-09-24T08:00:00+00:00` both work.
+    The total number of matches (ignoring limit/offset) is returned in the `X-Total-Count` header."""
+    if sort not in SORT_MAP:
+        raise HTTPException(422, f"Invalid sort. Use one of: {', '.join(SORT_MAP)}")
+    order = SORT_MAP[sort]
+    where = " WHERE 1=1"
+    params: list = []
+    if status:
+        statuses = [x.strip() for x in status.split(",") if x.strip()]
+        where += f" AND j.status IN ({','.join('?' * len(statuses))})"
+        params.extend(statuses)
+    if source:
+        where += " AND j.source = ?"
+        params.append(source)
+    if company:
+        where += " AND j.company LIKE ?"
+        params.append(f"%{company}%")
+    if location:
+        where += " AND j.location LIKE ?"
+        params.append(f"%{location}%")
+    if search:
+        s = f"%{search}%"
+        where += " AND (j.title LIKE ? OR j.company LIKE ? OR j.location LIKE ? OR j.description LIKE ?)"
+        params.extend([s, s, s, s])
+    if tag:
+        where += " AND j.id IN (SELECT job_id FROM job_tags WHERE tag = ?)"
+        params.append(tag)
+    for col, after, before in (
+        ("created_at", created_after, created_before),
+        ("updated_at", updated_after, updated_before),
+        ("last_changed_at", changed_after, changed_before),
+        ("last_checked_at", checked_after, None),
+    ):
+        if after:
+            where += f" AND j.{col} >= ?"
+            params.append(after)
+        if before:
+            where += f" AND j.{col} < ?"
+            params.append(before)
 
-        rows = conn.execute(query, params).fetchall()
-        result = []
-        for row in rows:
-            d = dict(row)
-            d["tags"] = d.pop("_tags", "").split(",") if d.get("_tags") else []
-            result.append(d)
-        return result
+    with get_db() as conn:
+        total = conn.execute(f"SELECT COUNT(*) FROM jobs j{where}", params).fetchone()[0]
+        rows = conn.execute(
+            f"""SELECT j.*,
+                (SELECT GROUP_CONCAT(tag ORDER BY tag) FROM job_tags WHERE job_id = j.id) as _tags
+                FROM jobs j{where} ORDER BY {order} LIMIT ? OFFSET ?""",
+            params + [limit, offset],
+        ).fetchall()
+    response.headers["X-Total-Count"] = str(total)
+    result = []
+    for row in rows:
+        d = dict(row)
+        d["tags"] = d.pop("_tags", "").split(",") if d.get("_tags") else []
+        result.append(d)
+    return result
 
 
 @router.post("", status_code=201)
 def create_job(job: JobCreate):
     now = utcnow()
+    job_id = new_job_id()
     with get_db() as conn:
-        cursor = conn.execute(
+        conn.execute(
             """INSERT INTO jobs (
-                title, company, location, description, requirements,
+                id, title, company, location, description, requirements,
                 salary, job_type, url, check_url, check_keyword,
                 html_content, status, notes, expires_at, external_id,
                 source, first_seen_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?)""",
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'manual', ?, ?, ?)""",
             (
-                job.title, job.company, job.location, job.description, job.requirements,
+                job_id, job.title, job.company, job.location, job.description, job.requirements,
                 job.salary, job.job_type, job.url, job.check_url, job.check_keyword,
                 job.html_content, job.status.value, job.notes, job.expires_at, job.external_id,
                 now, now, now,
             ),
         )
-        job_id = cursor.lastrowid
         for tag in job.tags:
             conn.execute(
                 "INSERT OR IGNORE INTO job_tags (job_id, tag) VALUES (?, ?)",
@@ -143,7 +180,7 @@ def list_tags():
 
 
 @router.get("/{job_id}")
-def get_job(job_id: int):
+def get_job(job_id: str):
     with get_db() as conn:
         job = get_job_with_tags(conn, job_id)
     if not job:
@@ -152,7 +189,7 @@ def get_job(job_id: int):
 
 
 @router.patch("/{job_id}")
-def update_job(job_id: int, update: JobUpdate):
+def update_job(job_id: str, update: JobUpdate):
     now = utcnow()
     with get_db() as conn:
         row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
@@ -197,13 +234,13 @@ def update_job(job_id: int, update: JobUpdate):
 
 
 @router.delete("/{job_id}", status_code=204)
-def delete_job(job_id: int):
+def delete_job(job_id: str):
     with get_db() as conn:
         conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
 
 
 @router.get("/{job_id}/history")
-def get_history(job_id: int):
+def get_history(job_id: str):
     with get_db() as conn:
         rows = conn.execute(
             "SELECT * FROM job_history WHERE job_id = ? ORDER BY changed_at DESC",
@@ -213,7 +250,7 @@ def get_history(job_id: int):
 
 
 @router.post("/{job_id}/check-url")
-async def check_url_now(job_id: int):
+async def check_url_now(job_id: str):
     with get_db() as conn:
         row = conn.execute(
             "SELECT url, check_url, check_keyword, status FROM jobs WHERE id = ?", (job_id,)

@@ -10,7 +10,7 @@ import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlencode
 
 import pyotp
 import qrcode
@@ -51,7 +51,7 @@ from app.auth_oidc import (
 )
 from app.config import POLL_INTERVAL_SECS, URL_CHECK_INTERVAL_SECS, SESSION_SECRET, APP_BASE_URL, DATA_DIR
 from app.database import (
-    get_db, get_job_with_tags, init_db, record_history,
+    get_db, get_job_with_tags, init_db, record_history, new_job_id,
     reset_jobs_data, export_jobs_data, describe_jobs_import, import_jobs_data,
 )
 from app.models import ALL_STATUSES, STATUS_COLORS
@@ -169,7 +169,23 @@ async def lifespan(app: FastAPI):
                 pass
 
 
-app = FastAPI(title="BewerbungsDB", lifespan=lifespan)
+API_DESCRIPTION = """REST API for BewerbungsDB (jobs, search configs).
+
+**Authentication:** create an API key in *Settings → API Keys* and send it as
+`Authorization: Bearer <key>`, the `X-Api-Key` header, or the `?api_key=` query parameter.
+Job IDs are short random strings (e.g. `a3f9c21b7e`)."""
+
+# Built-in /docs and /openapi.json are disabled: they would expose the internal
+# HTML routes. The public API spec is served under /api/v1/ (see below).
+app = FastAPI(
+    title="BewerbungsDB API",
+    version="1.0.0",
+    description=API_DESCRIPTION,
+    lifespan=lifespan,
+    docs_url=None,
+    redoc_url=None,
+    openapi_url=None,
+)
 
 # ── Middleware (order matters: last added = outermost = runs first) ───────────
 
@@ -243,6 +259,32 @@ templates.env.filters["tojson"] = _tojson_pretty
 
 app.include_router(jobs_router)
 app.include_router(searches_router)
+
+
+# ── OpenAPI / Swagger for third-party apps (public; /api/ prefix skips login) ──
+
+@app.get("/api/v1/openapi.json", include_in_schema=False)
+def api_openapi():
+    from fastapi.openapi.utils import get_openapi
+    if not getattr(app, "_api_schema", None):
+        app._api_schema = get_openapi(
+            title=app.title,
+            version=app.version,
+            description=app.description,
+            routes=[*jobs_router.routes, *searches_router.routes],
+            servers=[{"url": APP_BASE_URL}] if APP_BASE_URL else None,
+        )
+    return JSONResponse(app._api_schema)
+
+
+@app.get("/api/v1/docs", include_in_schema=False)
+def api_swagger_ui():
+    from fastapi.openapi.docs import get_swagger_ui_html
+    return get_swagger_ui_html(
+        openapi_url="/api/v1/openapi.json",
+        title="BewerbungsDB API",
+        swagger_ui_parameters={"persistAuthorization": True},
+    )
 
 # ── MCP HTTP transport ────────────────────────────────────────────────────────
 
@@ -717,6 +759,11 @@ def settings_page(request: Request):
         "saved": request.query_params.get("saved"),
         "error": request.query_params.get("error"),
         "app_base_url": APP_BASE_URL,
+        "claude_connector_url": "https://claude.ai/settings/connectors?" + urlencode({
+            "mcpName": "BewerbungsDB",
+            "mcpServerUrl": f"{APP_BASE_URL}/mcp",
+            "modal": "add-custom-connector",
+        }),
         "api_keys": list_api_keys(),
         "new_api_key": new_key,
         "oidc_providers": list_oidc_providers(),
@@ -1268,7 +1315,7 @@ def api_docs(request: Request):
 
 
 @app.post("/jobs/{job_id}/check-url", response_class=HTMLResponse)
-async def check_url_form(request: Request, job_id: int):
+async def check_url_form(request: Request, job_id: str):
     from app.services.scraper import fetch_url, extract_text
     from app.services.alerts import fire_status_change
     now = utcnow()
@@ -1399,21 +1446,22 @@ async def create_job_form(
 ):
     now = utcnow()
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
+    job_id = new_job_id()
     with get_db() as conn:
-        cursor = conn.execute(
+        conn.execute(
             """INSERT INTO jobs (
-                title, company, location, description, requirements,
+                id, title, company, location, description, requirements,
                 salary, job_type, url, check_url, check_keyword,
                 html_content, status, notes, expires_at,
                 contact_first_name, contact_last_name, contact_salutation, contact_title,
                 contact_email, contact_street, contact_street_nr, contact_plz, contact_city,
                 job_name_personalized, company_floskel, application_date, bewerbungstext,
                 source, first_seen_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
                       'manual', ?, ?, ?)""",
             (
-                title, company or None, location or None, description or None,
+                job_id, title, company or None, location or None, description or None,
                 requirements or None, salary or None, job_type or None,
                 url or None, check_url or None, check_keyword or None,
                 html_content or None, status, notes or None, expires_at or None,
@@ -1426,7 +1474,6 @@ async def create_job_form(
                 now, now, now,
             ),
         )
-        job_id = cursor.lastrowid
         for tag in tag_list:
             conn.execute("INSERT OR IGNORE INTO job_tags (job_id, tag) VALUES (?, ?)", (job_id, tag))
         conn.execute(
@@ -1444,7 +1491,7 @@ async def create_job_form(
 
 
 @app.get("/jobs/{job_id}", response_class=HTMLResponse)
-def job_detail(request: Request, job_id: int):
+def job_detail(request: Request, job_id: str):
     with get_db() as conn:
         job = get_job_with_tags(conn, job_id)
         if not job:
@@ -1468,7 +1515,7 @@ def job_detail(request: Request, job_id: int):
 async def edit_job_form(
     request: Request,
     background_tasks: BackgroundTasks,
-    job_id: int,
+    job_id: str,
     title: str = Form(...),
     company: str = Form(""),
     location: str = Form(""),
@@ -1568,7 +1615,7 @@ async def edit_job_form(
 
 
 @app.post("/jobs/{job_id}/status", response_class=HTMLResponse)
-async def update_status(request: Request, background_tasks: BackgroundTasks, job_id: int, status: str = Form(...)):
+async def update_status(request: Request, background_tasks: BackgroundTasks, job_id: str, status: str = Form(...)):
     now = utcnow()
     old_status = None
     with get_db() as conn:
@@ -1587,7 +1634,7 @@ async def update_status(request: Request, background_tasks: BackgroundTasks, job
 
 
 @app.post("/jobs/{job_id}/delete")
-def delete_job_form(job_id: int):
+def delete_job_form(job_id: str):
     with get_db() as conn:
         conn.execute("DELETE FROM jobs WHERE id = ?", (job_id,))
     return RedirectResponse("/jobs", status_code=303)
@@ -1645,13 +1692,13 @@ def _insert_job_from_dict(data: dict) -> int:
 
     cols = ", ".join(fields.keys())
     placeholders = ", ".join("?" * len(fields))
+    job_id = new_job_id()
     with get_db() as conn:
-        cursor = conn.execute(
-            f"INSERT INTO jobs ({cols}, source, first_seen_at, created_at, updated_at) "
-            f"VALUES ({placeholders}, 'import', ?, ?, ?)",
-            list(fields.values()) + [now, now, now],
+        conn.execute(
+            f"INSERT INTO jobs (id, {cols}, source, first_seen_at, created_at, updated_at) "
+            f"VALUES (?, {placeholders}, 'import', ?, ?, ?)",
+            [job_id] + list(fields.values()) + [now, now, now],
         )
-        job_id = cursor.lastrowid
         for tag in tag_list:
             conn.execute("INSERT OR IGNORE INTO job_tags (job_id, tag) VALUES (?, ?)", (job_id, tag))
         conn.execute(
@@ -1718,7 +1765,7 @@ async def import_job_submit(request: Request):
 # ─── Claude AI auto-parse ─────────────────────────────────────────────────────
 
 @app.post("/jobs/{job_id}/auto-parse")
-async def auto_parse_job_route(job_id: int):
+async def auto_parse_job_route(job_id: str):
     from app.services.ai_provider import auto_parse_job
     with get_db() as conn:
         job = get_job_with_tags(conn, job_id)

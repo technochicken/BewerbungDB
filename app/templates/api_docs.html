@@ -18,6 +18,11 @@
 
   <div>
     <h1 class="text-2xl font-bold text-slate-800">API-Referenz</h1>
+    <p class="text-sm text-slate-500 mt-1">
+      Für Drittanbieter-Apps:
+      <a href="/api/v1/docs" target="_blank" class="text-blue-600 hover:underline">Swagger UI ↗</a> ·
+      <a href="/api/v1/openapi.json" target="_blank" class="text-blue-600 hover:underline">openapi.json ↗</a>
+    </p>
     <p class="text-slate-500 mt-1 text-sm">
       REST-API für alle Stellen- und Suchkonfigurationsdaten. Basis-URL:
       <code class="bg-slate-100 px-1.5 py-0.5 rounded font-mono text-xs">{{ base_url }}/api/v1</code>
@@ -100,7 +105,7 @@
         <span class="text-xs text-slate-500 ml-2">Neue Stelle anlegen</span>
       </div>
       <div class="p-5 space-y-3">
-        <p class="text-xs text-slate-600">Legt eine neue Stelle an. Content-Type: <code class="bg-slate-100 px-1 rounded">application/json</code>. Gibt <code class="bg-slate-100 px-1 rounded">{"id": 42}</code> zurück.</p>
+        <p class="text-xs text-slate-600">Legt eine neue Stelle an. Content-Type: <code class="bg-slate-100 px-1 rounded">application/json</code>. Gibt <code class="bg-slate-100 px-1 rounded">{"id": "a3f9c21b7e"}</code> zurück.</p>
         <div class="bg-slate-900 rounded-lg p-4 text-xs font-mono text-green-300 overflow-auto">
 <pre>POST /api/v1/jobs
 Content-Type: application/json
@@ -164,7 +169,7 @@ Content-Type: application/json
           Jede Änderung wird im Verlauf protokolliert. Gibt <code class="bg-slate-100 px-1 rounded">{"status": "updated"}</code> zurück.
         </p>
         <div class="bg-slate-900 rounded-lg p-4 text-xs font-mono text-green-300 overflow-auto">
-<pre>PATCH /api/v1/jobs/42
+<pre>PATCH /api/v1/jobs/a3f9c21b7e
 Content-Type: application/json
 
 {
@@ -511,7 +516,7 @@ Content-Type: application/json
         <tbody class="divide-y divide-slate-50">
           {# System #}
           <tr class="bg-slate-50"><td colspan="3" class="py-1.5 px-2 text-xs font-semibold text-slate-400 uppercase tracking-wide">System</td></tr>
-          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">id</td><td class="py-1.5 pr-4 text-slate-500">integer</td><td class="py-1.5 text-slate-600">Interne ID (nur lesbar)</td></tr>
+          <tr><td class="py-1.5 pr-4 font-mono text-slate-800">id</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Interne ID (nur lesbar)</td></tr>
           <tr><td class="py-1.5 pr-4 font-mono text-slate-800">source</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600"><code>manual</code> oder <code>arbeitsagentur</code></td></tr>
           <tr><td class="py-1.5 pr-4 font-mono text-slate-800">external_id</td><td class="py-1.5 pr-4 text-slate-500">string</td><td class="py-1.5 text-slate-600">Referenznummer der Quelle</td></tr>
           <tr><td class="py-1.5 pr-4 font-mono text-slate-800">created_at</td><td class="py-1.5 pr-4 text-slate-500">ISO 8601</td><td class="py-1.5 text-slate-600">Zeitpunkt der Erfassung (UTC)</td></tr>

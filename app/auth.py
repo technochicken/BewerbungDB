@@ -4,7 +4,8 @@ import time
 from datetime import datetime, timezone
 from typing import Optional
 
-from fastapi import HTTPException, Header, Query, Request
+from fastapi import Depends, HTTPException, Header, Query, Request
+from fastapi.security import APIKeyHeader, APIKeyQuery, HTTPAuthorizationCredentials, HTTPBearer
 from itsdangerous import URLSafeTimedSerializer, BadData
 
 
@@ -464,15 +465,22 @@ def import_settings_data(data: dict) -> None:
 
 # ── API key FastAPI dependency ────────────────────────────────────────────────
 
+# Declared as FastAPI security schemes so they show up in the OpenAPI spec
+# and enable the "Authorize" button in Swagger UI.
+_bearer_scheme = HTTPBearer(auto_error=False, scheme_name="BearerAuth", description="API key as Bearer token")
+_header_scheme = APIKeyHeader(name="X-Api-Key", auto_error=False, scheme_name="ApiKeyHeader")
+_query_scheme = APIKeyQuery(name="api_key", auto_error=False, scheme_name="ApiKeyQuery")
+
+
 async def require_api_key(
     request: Request,
-    api_key: Optional[str] = Query(None),
-    x_api_key: Optional[str] = Header(None),
-    authorization: Optional[str] = Header(None),
+    bearer: Optional[HTTPAuthorizationCredentials] = Depends(_bearer_scheme),
+    x_api_key: Optional[str] = Depends(_header_scheme),
+    api_key: Optional[str] = Depends(_query_scheme),
 ) -> None:
     provided = api_key or x_api_key
-    if authorization and authorization.startswith("Bearer "):
-        provided = authorization[7:].strip()
+    if bearer and bearer.credentials:
+        provided = bearer.credentials.strip()
 
     if not provided:
         raise HTTPException(

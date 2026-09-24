@@ -106,11 +106,11 @@ def list_jobs(
 
 
 @mcp.tool()
-def get_job(job_id: int) -> str:
+def get_job(job_id: str) -> str:
     """Get full details of a single job application.
 
     Args:
-        job_id: The integer ID of the job.
+        job_id: The ID of the job.
     """
     with get_db() as conn:
         job = get_job_with_tags(conn, job_id)
@@ -122,11 +122,11 @@ def get_job(job_id: int) -> str:
 
 
 @mcp.tool()
-def update_job(job_id: int, updates: str) -> str:
+def update_job(job_id: str, updates: str) -> str:
     """Update fields of a job application.
 
     Args:
-        job_id:  The integer ID of the job to update.
+        job_id:  The ID of the job to update.
         updates: JSON string of field→value pairs to update.
                  Updatable fields: title, company, location, description,
                  requirements, salary, job_type, url, status, notes,
