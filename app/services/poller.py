@@ -4,7 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Optional
 
-from app.database import get_db, record_history
+from app.database import get_db, record_history, new_job_id
 from app.services.arbeitsagentur import search_jobs, get_job_details, parse_listing, enrich_with_details, get_refnr
 from app.services.scraper import fetch_url, extract_text
 
@@ -15,7 +15,7 @@ def utcnow() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-async def check_and_maybe_close(job_id: int, url: str, keyword: Optional[str], initial_status: str = "new") -> bool:
+async def check_and_maybe_close(job_id: str, url: str, keyword: Optional[str], initial_status: str = "new") -> bool:
     """
     Fetch the URL and close the job if unreachable or keyword missing.
     Returns True if the job was closed.
@@ -126,15 +126,16 @@ async def run_search(config_id: int) -> dict:
 
         now = utcnow()
         with get_db() as conn:
+            job_id = new_job_id()
             cursor = conn.execute(
                 """INSERT OR IGNORE INTO jobs (
-                    external_id, source, title, company, location,
+                    id, external_id, source, title, company, location,
                     description, requirements, salary, job_type, url,
                     raw_api_data, search_config_id, status,
                     first_seen_at, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)""",
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'new', ?, ?, ?)""",
                 (
-                    job_data["external_id"], job_data["source"],
+                    job_id, job_data["external_id"], job_data["source"],
                     job_data["title"], job_data.get("company"), job_data.get("location"),
                     job_data.get("description"), job_data.get("requirements"),
                     job_data.get("salary"), job_data.get("job_type"), job_data.get("url"),
@@ -142,7 +143,6 @@ async def run_search(config_id: int) -> dict:
                     now, now, now,
                 ),
             )
-            job_id = cursor.lastrowid
             if cursor.rowcount:
                 for tag in tags:
                     conn.execute(

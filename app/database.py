@@ -1,5 +1,6 @@
 import logging
 import sqlite3
+import uuid
 from contextlib import contextmanager
 from app.config import DB_PATH
 
@@ -7,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS jobs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id TEXT PRIMARY KEY,
     external_id TEXT,
     source TEXT NOT NULL DEFAULT 'manual',
     title TEXT NOT NULL,
@@ -40,14 +41,14 @@ CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
 CREATE INDEX IF NOT EXISTS idx_jobs_created ON jobs(created_at DESC);
 
 CREATE TABLE IF NOT EXISTS job_tags (
-    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     tag TEXT NOT NULL,
     PRIMARY KEY (job_id, tag)
 );
 
 CREATE TABLE IF NOT EXISTS job_history (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id INTEGER NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
+    job_id TEXT NOT NULL REFERENCES jobs(id) ON DELETE CASCADE,
     field TEXT NOT NULL,
     old_value TEXT,
     new_value TEXT,
@@ -153,6 +154,11 @@ MIGRATIONS = [
 ]
 
 
+def new_job_id() -> str:
+    """Short random job ID (10 hex chars of a UUID4)."""
+    return uuid.uuid4().hex[:10]
+
+
 def get_connection():
     conn = sqlite3.connect(str(DB_PATH))
     conn.row_factory = sqlite3.Row
@@ -178,9 +184,78 @@ def get_db():
 def init_db():
     with get_db() as conn:
         conn.executescript(SCHEMA)
+    _migrate_job_ids()
     _run_migrations()
     from app.auth import init_auth
     init_auth()
+
+
+def _migrate_job_ids():
+    """One-time rebuild of jobs/job_tags/job_history from INTEGER ids to short random text ids."""
+    conn = get_connection()
+    conn.isolation_level = None  # manage the transaction manually
+    try:
+        col = next((r for r in conn.execute("PRAGMA table_info(jobs)") if r["name"] == "id"), None)
+        if col is None or col["type"].upper() != "INTEGER":
+            return
+        logger.info("Migrating job IDs to short UUIDs")
+        conn.execute("PRAGMA foreign_keys = OFF")
+        conn.execute("BEGIN")
+        old_ids = [r[0] for r in conn.execute("SELECT id FROM jobs ORDER BY id")]
+        mapping = {}
+        used = set()
+        for oid in old_ids:
+            nid = new_job_id()
+            while nid in used:
+                nid = new_job_id()
+            used.add(nid)
+            mapping[oid] = nid
+        conn.execute("CREATE TEMP TABLE _job_id_map (old INTEGER PRIMARY KEY, new TEXT NOT NULL)")
+        conn.executemany("INSERT INTO _job_id_map VALUES (?, ?)", list(mapping.items()))
+
+        cols = [r["name"] for r in conn.execute("PRAGMA table_info(jobs)") if r["name"] != "id"]
+        col_list = ", ".join(cols)
+        conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
+        conn.execute("DROP INDEX IF EXISTS idx_jobs_external")
+        conn.execute("DROP INDEX IF EXISTS idx_jobs_status")
+        conn.execute("DROP INDEX IF EXISTS idx_jobs_created")
+        conn.execute("ALTER TABLE job_tags RENAME TO job_tags_old")
+        conn.execute("ALTER TABLE job_history RENAME TO job_history_old")
+        conn.execute("DROP INDEX IF EXISTS idx_history_job")
+        # recreate tables with text ids (statement by statement: executescript would commit)
+        for stmt in SCHEMA.split(";"):
+            if stmt.strip():
+                conn.execute(stmt)
+        new_cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+        for table, column, sql in MIGRATIONS:
+            if table == "jobs" and column in cols and column not in new_cols:
+                conn.execute(sql)
+        conn.execute(
+            f"INSERT INTO jobs (id, {col_list}) "
+            f"SELECT m.new, {', '.join('o.' + c for c in cols)} "
+            "FROM jobs_old o JOIN _job_id_map m ON m.old = o.id"
+        )
+        conn.execute(
+            "INSERT INTO job_tags (job_id, tag) "
+            "SELECT m.new, t.tag FROM job_tags_old t JOIN _job_id_map m ON m.old = t.job_id"
+        )
+        conn.execute(
+            "INSERT INTO job_history (id, job_id, field, old_value, new_value, changed_at) "
+            "SELECT h.id, m.new, h.field, h.old_value, h.new_value, h.changed_at "
+            "FROM job_history_old h JOIN _job_id_map m ON m.old = h.job_id"
+        )
+        conn.execute("DROP TABLE job_tags_old")
+        conn.execute("DROP TABLE job_history_old")
+        conn.execute("DROP TABLE jobs_old")
+        conn.execute("DROP TABLE _job_id_map")
+        conn.execute("COMMIT")
+    except Exception:
+        if conn.in_transaction:
+            conn.execute("ROLLBACK")
+        raise
+    finally:
+        conn.execute("PRAGMA foreign_keys = ON")
+        conn.close()
 
 
 def _run_migrations():
@@ -192,7 +267,7 @@ def _run_migrations():
                 logger.info(f"Migration applied: {table}.{column}")
 
 
-def get_job_with_tags(conn, job_id: int):
+def get_job_with_tags(conn, job_id: str):
     row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
     if not row:
         return None
@@ -268,7 +343,7 @@ def import_jobs_data(data: dict) -> None:
         _insert_rows(conn, "alert_configs", data.get("alert_configs", []))
 
 
-def record_history(conn, job_id: int, field: str, old_val, new_val, now: str):
+def record_history(conn, job_id: str, field: str, old_val, new_val, now: str):
     old_s = str(old_val) if old_val is not None else None
     new_s = str(new_val) if new_val is not None else None
     if old_s != new_s:
