@@ -8,7 +8,7 @@ import secrets
 import secrets as _secrets_mod
 import time
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Optional
 from urllib.parse import urlparse, urlencode
 
@@ -731,7 +731,7 @@ async def oidc_callback(
 def settings_page(request: Request):
     _cleanup_stale_imports()
     mcp_token = settings_get("mcp_token") or ""
-    new_key = request.session.pop("flash_new_key", None)
+    new_key = getattr(request.state, "new_api_key", None) or request.session.pop("flash_new_key", None)
 
     totp_enabled = get_totp_enabled()
     totp_setup = None
@@ -1160,14 +1160,25 @@ def save_ai_settings(
 def api_key_create(
     request: Request,
     name: str = Form("API Key"),
-    expires_at: str = Form(""),
+    valid_days: str = Form("365"),
     csrf: str = Form(""),
 ):
     if not validate_csrf_token(request.session, csrf):
         raise HTTPException(403, "Invalid CSRF token")
-    raw = create_api_key(name.strip() or "API Key", expires_at.strip() or None)
-    request.session["flash_new_key"] = raw
-    return RedirectResponse("/settings?saved=apikey#api-keys", status_code=303)
+    expires_at = None
+    if valid_days != "never":
+        try:
+            days = min(max(int(valid_days), 1), 3650)
+        except ValueError:
+            raise HTTPException(422, "Invalid validity period")
+        expires_at = (datetime.now(timezone.utc) + timedelta(days=days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+    raw = create_api_key(name.strip() or "API Key", expires_at)
+    # Render the key directly in this response (no redirect / cookie round-trip),
+    # so it is shown exactly once and can never be lost or replayed.
+    request.state.new_api_key = raw
+    response = settings_page(request)
+    response.headers["Cache-Control"] = "no-store"
+    return response
 
 
 @app.post("/settings/api-keys/{key_id}/revoke", response_class=HTMLResponse)
