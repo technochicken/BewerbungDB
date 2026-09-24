@@ -143,6 +143,16 @@ def init_auth() -> None:
     import logging
     logger = logging.getLogger(__name__)
 
+    from app.config import INITIAL_PASSWORD
+    if not get_password_hash() and INITIAL_PASSWORD:
+        set_password(INITIAL_PASSWORD)
+        _set("needs_password_change", "true")
+        logger.warning("Login password initialised from INITIAL_PASSWORD (change it in Settings → Password)")
+    elif get_password_hash() and INITIAL_PASSWORD and _get("needs_password_change") == "true":
+        # No custom password chosen yet: INITIAL_PASSWORD stays authoritative.
+        set_password(INITIAL_PASSWORD)
+        logger.warning("Custom password not set yet – login password synced to INITIAL_PASSWORD")
+
     if not get_password_hash():
         password = secrets.token_urlsafe(12)
         set_password(password)

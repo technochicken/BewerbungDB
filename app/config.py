@@ -19,4 +19,8 @@ PORT = int(os.getenv("PORT", "8000"))
 # Without it a new secret is generated each start (users must re-login after restart).
 SESSION_SECRET = os.getenv("SESSION_SECRET") or secrets.token_hex(32)
 
+# Optional bootstrap password. Only valid until a custom password is set in
+# Settings → Password; after that this variable is ignored.
+INITIAL_PASSWORD = os.getenv("INITIAL_PASSWORD", "")
+
 APP_BASE_URL = os.getenv("APP_BASE_URL", "http://localhost:8000").rstrip("/")
