@@ -83,7 +83,24 @@ def list_api_keys() -> list[dict]:
             "SELECT id, name, key_prefix, created_at, last_used_at, expires_at, is_active "
             "FROM api_keys ORDER BY created_at DESC"
         ).fetchall()
-    return [dict(r) for r in rows]
+    now = datetime.now(timezone.utc)
+    keys = []
+    for r in rows:
+        d = dict(r)
+        exp = d.get("expires_at")
+        d["expired"] = False
+        d["days_left"] = None
+        if exp:
+            try:
+                dt = datetime.fromisoformat(exp.replace("Z", "+00:00"))
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                d["expired"] = dt < now
+                d["days_left"] = (dt - now).days
+            except ValueError:
+                pass
+        keys.append(d)
+    return keys
 
 
 def revoke_api_key(key_id: int) -> None:

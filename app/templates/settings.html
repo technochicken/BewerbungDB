@@ -132,8 +132,8 @@
 
     {# New key flash #}
     {% if new_api_key %}
-    <div x-data="{ copied: false }" class="rounded-lg p-3" style="background:#052e16; border:1px solid #166534;">
-      <p class="text-xs font-semibold text-green-300 mb-1">✓ Neuer API-Key — jetzt kopieren, wird nicht wieder angezeigt:</p>
+    <div x-data="{ copied: false }" x-init="$el.scrollIntoView({ block: 'center' })" class="rounded-lg p-3" style="background:#052e16; border:1px solid #166534;">
+      <p class="text-xs font-semibold text-green-300 mb-1">✓ Neuer API-Key erstellt — jetzt kopieren, er wird danach nie wieder angezeigt:</p>
       <div class="flex items-center gap-2">
         <code class="flex-1 text-xs font-mono text-green-200 break-all select-all">{{ new_api_key }}</code>
         <button @click="navigator.clipboard.writeText('{{ new_api_key }}'); copied = true; setTimeout(() => copied = false, 2000)"
@@ -154,6 +154,7 @@
             <th class="pb-2 font-medium">Präfix</th>
             <th class="pb-2 font-medium">Erstellt</th>
             <th class="pb-2 font-medium">Zuletzt genutzt</th>
+            <th class="pb-2 font-medium">Gültig bis</th>
             <th class="pb-2 font-medium">Status</th>
             <th class="pb-2 font-medium"></th>
           </tr>
@@ -165,8 +166,16 @@
             <td class="py-2 font-mono">{{ key.key_prefix }}…</td>
             <td class="py-2 text-slate-400">{{ key.created_at[:10] }}</td>
             <td class="py-2 text-slate-400">{{ key.last_used_at[:10] if key.last_used_at else '—' }}</td>
+            <td class="py-2 text-slate-400">
+              {% if key.expires_at %}
+                {{ key.expires_at[:10] }}
+                {% if not key.expired and key.days_left is not none %}<span class="text-slate-400">({{ key.days_left }} Tage)</span>{% endif %}
+              {% else %}unbegrenzt{% endif %}
+            </td>
             <td class="py-2">
-              {% if key.is_active %}
+              {% if key.is_active and key.expired %}
+              <span class="px-1.5 py-0.5 rounded text-xs bg-red-100 text-red-700">abgelaufen</span>
+              {% elif key.is_active %}
               <span class="px-1.5 py-0.5 rounded text-xs bg-green-100 text-green-700">aktiv</span>
               {% else %}
               <span class="px-1.5 py-0.5 rounded text-xs bg-slate-100 text-slate-500">widerrufen</span>
@@ -209,9 +218,14 @@
         <div class="flex gap-2">
           <input type="text" name="name" placeholder="Name (z.B. Excel, Skript …)" required
                  class="field-input flex-1 text-sm">
-          <input type="date" name="expires_at" title="Ablaufdatum (optional)"
-                 class="field-input text-sm w-36" min="{{ '' }}">
+          <select name="valid_days" title="Wie lange ist der Key gültig?" class="field-input text-sm w-44">
+            <option value="30">Gültig: 30 Tage</option>
+            <option value="90">Gültig: 90 Tage</option>
+            <option value="365" selected>Gültig: 1 Jahr</option>
+            <option value="never">Gültig: unbegrenzt</option>
+          </select>
         </div>
+        <p class="text-xs text-slate-400">Der Key wird nach dem Erstellen einmalig angezeigt und kann später nicht mehr abgerufen werden.</p>
         <button type="submit" class="btn-primary text-xs">API-Key erstellen</button>
       </form>
     </details>
