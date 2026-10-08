@@ -233,7 +233,7 @@
 
   {# ── KI-Anbieter (Auto-Parse) ─────────────────────────────────────────────── #}
   <div id="ai-provider" class="bg-white rounded-lg border border-slate-200 shadow-sm p-5 space-y-4"
-       x-data="{ provider: '{{ ai_provider }}', showClaudeKey: false, showOpenaiKey: false }">
+       x-data="{ provider: '{{ ai_provider }}', showClaudeKey: false, showOpenaiKey: false, showOpenwebuiKey: false }">
     <div>
       <h2 class="font-semibold text-slate-700">KI-Anbieter (Auto-Parse)</h2>
       <p class="text-xs text-slate-400 mt-0.5">
@@ -241,7 +241,7 @@
       </p>
     </div>
 
-    <div class="flex gap-2">
+    <div class="flex flex-wrap gap-2">
       {% for key, meta in ai_providers.items() %}
       <button type="button" @click="provider = '{{ key }}'"
               class="text-xs px-3 py-1.5 rounded-lg border transition-colors"
@@ -332,6 +332,45 @@
             {% for m in ai_providers.ollama.model_suggestions %}<option value="{{ m }}">{% endfor %}
           </datalist>
           <span class="field-hint">Muss lokal via <code class="bg-slate-100 px-1 rounded">ollama pull</code> vorhanden sein.</span>
+        </div>
+      </div>
+
+      {# Open WebUI fields #}
+      <div x-show="provider === 'openwebui'" x-cloak class="space-y-4">
+        <div>
+          <label class="field-label">Open WebUI-URL</label>
+          <input type="text" name="openwebui_base_url" value="{{ openwebui_base_url }}"
+                 placeholder="http://localhost:3000" class="field-input font-mono text-xs">
+          <span class="field-hint">
+            Basis-URL deiner Open WebUI-Instanz, ohne <code class="bg-slate-100 px-1 rounded">/api</code>.
+            Läuft BewerbungsDB in Docker, ist <code class="bg-slate-100 px-1 rounded">localhost</code> der Container selbst –
+            dann den Hostnamen oder die öffentliche URL verwenden.
+          </span>
+        </div>
+        <div>
+          <label class="field-label">Open WebUI API-Key</label>
+          <div class="flex gap-2">
+            <input :type="showOpenwebuiKey ? 'text' : 'password'"
+                   name="openwebui_api_key" value="" autocomplete="off"
+                   placeholder="{{ 'gespeichert — zum Ändern neuen Key eingeben' if openwebui_api_key_set else 'sk-...' }}"
+                   class="field-input flex-1 font-mono text-xs">
+            <button type="button" @click="showOpenwebuiKey = !showOpenwebuiKey"
+                    class="btn-secondary text-xs shrink-0"
+                    x-text="showOpenwebuiKey ? 'Verbergen' : 'Anzeigen'"></button>
+          </div>
+          <span class="field-hint">
+            {% if openwebui_api_key_set %}Ein Key ist gespeichert und wird aus Sicherheitsgründen nicht angezeigt. Leer lassen, um ihn zu behalten.{% endif %}
+            In Open WebUI unter Einstellungen → Konto → API-Keys erstellen.
+          </span>
+        </div>
+        <div>
+          <label class="field-label">Modell</label>
+          <input type="text" name="openwebui_model" list="openwebui-models" value="{{ openwebui_model }}"
+                 class="field-input font-mono text-xs">
+          <datalist id="openwebui-models">
+            {% for m in ai_providers.openwebui.model_suggestions %}<option value="{{ m }}">{% endfor %}
+          </datalist>
+          <span class="field-hint">Name des Modells, wie es in Open WebUI angezeigt wird.</span>
         </div>
       </div>
 
