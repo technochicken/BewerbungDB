@@ -46,6 +46,19 @@ PROVIDERS = {
             "phi4",
         ],
     },
+    "openwebui": {
+        "label": "Open WebUI",
+        "needs_api_key": True,
+        "needs_base_url": True,
+        "default_model": "llama3.1:latest",
+        "default_base_url": "http://localhost:3000",
+        "model_suggestions": [
+            "llama3.1:latest",
+            "qwen2.5:latest",
+            "mistral:latest",
+            "phi4:latest",
+        ],
+    },
 }
 
 ALLOWED_FIELDS = {
@@ -53,6 +66,8 @@ ALLOWED_FIELDS = {
     "contact_email", "contact_street", "contact_street_nr", "contact_plz", "contact_city",
     "job_name_personalized", "company_floskel",
 }
+
+OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 
 def _get_ai_settings() -> dict:
@@ -69,6 +84,9 @@ def _get_ai_settings() -> dict:
         "openai_model": _get("openai_model") or PROVIDERS["openai"]["default_model"],
         "ollama_base_url": _get("ollama_base_url") or PROVIDERS["ollama"]["default_base_url"],
         "ollama_model": _get("ollama_model") or PROVIDERS["ollama"]["default_model"],
+        "openwebui_api_key": _get("openwebui_api_key") or "",
+        "openwebui_base_url": _get("openwebui_base_url") or PROVIDERS["openwebui"]["default_base_url"],
+        "openwebui_model": _get("openwebui_model") or PROVIDERS["openwebui"]["default_model"],
     }
 
 
@@ -138,46 +156,85 @@ async def _call_claude(system_prompt: str, user_prompt: str, api_key: str, model
         "system": system_prompt,
         "messages": [{"role": "user", "content": user_prompt}],
     }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            "https://api.anthropic.com/v1/messages",
-            headers={
-                "x-api-key": api_key,
-                "anthropic-version": "2023-06-01",
-                "content-type": "application/json",
-            },
-            json=payload,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            resp = await client.post(
+                "https://api.anthropic.com/v1/messages",
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                },
+                json=payload,
+            )
+    except httpx.RequestError as e:
+        raise ValueError(f"Claude API nicht erreichbar: {e}")
     if resp.status_code != 200:
         logger.error("Claude API error %s: %s", resp.status_code, resp.text)
         raise ValueError(f"Claude API Fehler {resp.status_code}: {resp.text[:200]}")
     return resp.json()["content"][0]["text"].strip()
 
 
-async def _call_openai(system_prompt: str, user_prompt: str, api_key: str, model: str) -> str:
+async def _call_openai_compatible(
+    system_prompt: str,
+    user_prompt: str,
+    api_key: str,
+    model: str,
+    url: str = OPENAI_CHAT_URL,
+    label: str = "OpenAI",
+    timeout: int = 30,
+) -> str:
+    """Works for OpenAI and any OpenAI-compatible endpoint (e.g. Open WebUI)."""
     if not api_key:
-        raise ValueError("Kein OpenAI API-Key konfiguriert (Einstellungen → KI-Anbieter)")
+        raise ValueError(f"Kein {label} API-Key konfiguriert (Einstellungen → KI-Anbieter)")
     payload = {
         "model": model,
         "max_tokens": 512,
+        "stream": False,
         "messages": [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt},
         ],
     }
-    async with httpx.AsyncClient(timeout=30) as client:
-        resp = await client.post(
-            "https://api.openai.com/v1/chat/completions",
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "content-type": "application/json",
-            },
-            json=payload,
-        )
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(
+                url,
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "content-type": "application/json",
+                },
+                json=payload,
+            )
+    except httpx.RequestError as e:
+        raise ValueError(f"{label} unter {url} nicht erreichbar: {e}")
     if resp.status_code != 200:
-        logger.error("OpenAI API error %s: %s", resp.status_code, resp.text)
-        raise ValueError(f"OpenAI API Fehler {resp.status_code}: {resp.text[:200]}")
-    return resp.json()["choices"][0]["message"]["content"].strip()
+        logger.error("%s API error %s: %s", label, resp.status_code, resp.text)
+        raise ValueError(f"{label} API Fehler {resp.status_code}: {resp.text[:200]}")
+    try:
+        return resp.json()["choices"][0]["message"]["content"].strip()
+    except (KeyError, IndexError, TypeError, json.JSONDecodeError):
+        logger.error("%s returned unexpected response: %s", label, resp.text)
+        raise ValueError(f"{label} lieferte eine unerwartete Antwort: {resp.text[:200]}")
+
+
+async def _call_openai(system_prompt: str, user_prompt: str, api_key: str, model: str) -> str:
+    return await _call_openai_compatible(
+        system_prompt, user_prompt, api_key, model,
+        url=OPENAI_CHAT_URL, label="OpenAI", timeout=30,
+    )
+
+
+async def _call_openwebui(
+    system_prompt: str, user_prompt: str, base_url: str, api_key: str, model: str
+) -> str:
+    if not base_url:
+        raise ValueError("Keine Open WebUI-URL konfiguriert (Einstellungen → KI-Anbieter)")
+    url = base_url.rstrip("/") + "/api/chat/completions"
+    return await _call_openai_compatible(
+        system_prompt, user_prompt, api_key, model,
+        url=url, label="Open WebUI", timeout=120,
+    )
 
 
 async def _call_ollama(system_prompt: str, user_prompt: str, base_url: str, model: str) -> str:
@@ -203,6 +260,26 @@ async def _call_ollama(system_prompt: str, user_prompt: str, base_url: str, mode
     return resp.json()["message"]["content"].strip()
 
 
+# ── JSON extraction ────────────────────────────────────────────────────────────
+
+def _extract_json(content: str) -> dict:
+    """Parse the model output; tolerate code fences or text around the JSON."""
+    try:
+        return json.loads(content)
+    except json.JSONDecodeError:
+        pass
+    start = content.find("{")
+    end = content.rfind("}") + 1
+    if start != -1 and end > start:
+        try:
+            return json.loads(content[start:end])
+        except json.JSONDecodeError as e:
+            logger.error("AI provider returned invalid JSON: %s", content)
+            raise ValueError(f"KI antwortete mit ungültigem JSON: {e}")
+    logger.error("AI provider returned no JSON: %s", content)
+    raise ValueError("KI antwortete ohne JSON-Objekt")
+
+
 # ── Public entry point ─────────────────────────────────────────────────────────
 
 async def auto_parse_job(job: dict) -> dict:
@@ -224,18 +301,16 @@ async def auto_parse_job(job: dict) -> dict:
         content = await _call_ollama(
             system_prompt, user_prompt, settings["ollama_base_url"], settings["ollama_model"]
         )
+    elif provider == "openwebui":
+        content = await _call_openwebui(
+            system_prompt, user_prompt,
+            settings["openwebui_base_url"], settings["openwebui_api_key"], settings["openwebui_model"],
+        )
     else:
         raise ValueError(f"Unbekannter KI-Anbieter: {provider}")
 
-    if "```" in content:
-        start = content.find("{")
-        end = content.rfind("}") + 1
-        content = content[start:end]
-
-    try:
-        result = json.loads(content)
-    except json.JSONDecodeError as e:
-        logger.error("AI provider returned invalid JSON: %s", content)
-        raise ValueError(f"KI antwortete mit ungültigem JSON: {e}")
+    result = _extract_json(content)
+    if not isinstance(result, dict):
+        raise ValueError("KI antwortete nicht mit einem JSON-Objekt")
 
     return {k: str(v).strip() for k, v in result.items() if k in ALLOWED_FIELDS and v and str(v).strip()}
