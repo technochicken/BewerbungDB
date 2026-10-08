@@ -754,6 +754,9 @@ def settings_page(request: Request):
         "openai_model": settings_get("openai_model") or AI_PROVIDERS["openai"]["default_model"],
         "ollama_base_url": settings_get("ollama_base_url") or AI_PROVIDERS["ollama"]["default_base_url"],
         "ollama_model": settings_get("ollama_model") or AI_PROVIDERS["ollama"]["default_model"],
+        "openwebui_api_key_set": bool(settings_get("openwebui_api_key")),
+        "openwebui_base_url": settings_get("openwebui_base_url") or AI_PROVIDERS["openwebui"]["default_base_url"],
+        "openwebui_model": settings_get("openwebui_model") or AI_PROVIDERS["openwebui"]["default_model"],
         "user_gender": settings_get("user_gender") or "männlich",
         "mcp_token": mcp_token,
         "saved": request.query_params.get("saved"),
@@ -1134,6 +1137,9 @@ def save_ai_settings(
     openai_model: str = Form(""),
     ollama_base_url: str = Form(""),
     ollama_model: str = Form(""),
+    openwebui_api_key: str = Form(""),
+    openwebui_base_url: str = Form(""),
+    openwebui_model: str = Form(""),
     user_gender: str = Form("männlich"),
     csrf: str = Form(""),
 ):
@@ -1150,6 +1156,10 @@ def save_ai_settings(
     settings_set("openai_model", openai_model.strip() or AI_PROVIDERS["openai"]["default_model"])
     settings_set("ollama_base_url", ollama_base_url.strip() or AI_PROVIDERS["ollama"]["default_base_url"])
     settings_set("ollama_model", ollama_model.strip() or AI_PROVIDERS["ollama"]["default_model"])
+    if openwebui_api_key.strip():
+        settings_set("openwebui_api_key", openwebui_api_key.strip())
+    settings_set("openwebui_base_url", openwebui_base_url.strip() or AI_PROVIDERS["openwebui"]["default_base_url"])
+    settings_set("openwebui_model", openwebui_model.strip() or AI_PROVIDERS["openwebui"]["default_model"])
     settings_set("user_gender", user_gender)
     return RedirectResponse("/settings?saved=ai#ai-provider", status_code=303)
 
