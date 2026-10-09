@@ -90,7 +90,17 @@
     <p class="text-center text-xs text-slate-500 mt-4">BewerbungsDB – privates Bewerbungsmanagement</p>
   </div>
 
+<div class="fixed bottom-2 right-3 text-right" style="font-size:11px;">
+  <button type="button" id="ver-btn" class="text-slate-600 hover:text-slate-400 transition-colors"
+          title="Build-Info anzeigen">Version {{ BUILD.version }}</button><span id="ver-more" hidden class="text-slate-500">
+    &nbsp;→ build: {{ BUILD.sha }}{% if BUILD.date %} · {{ BUILD.date }}{% endif %}</span>
+</div>
+
 <script>
+document.getElementById('ver-btn').addEventListener('click', () => {
+  const more = document.getElementById('ver-more');
+  more.hidden = !more.hidden;
+});
 (function () {
   const btn = document.getElementById('passkey-btn');
   if (!btn) return;

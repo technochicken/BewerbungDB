@@ -209,6 +209,11 @@
                   {% if request.url.path.startswith('/settings') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
           ⚙ Einstellungen
         </a>
+        <a href="/about"
+           class="px-3 py-1.5 rounded text-sm font-medium transition-colors
+                  {% if request.url.path.startswith('/about') %}bg-slate-700 text-white{% else %}text-slate-300 hover:text-white hover:bg-slate-800{% endif %}">
+          ⓘ Über
+        </a>
       </div>
       <div class="flex items-center gap-2">
         <a href="/jobs/new"

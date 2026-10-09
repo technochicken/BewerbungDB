@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block title %}Über – BewerbungsDB{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl space-y-6">
+  <div>
+    <h1 class="text-2xl font-bold text-slate-800">Über BewerbungsDB</h1>
+    <p class="text-sm text-slate-500 mt-1">Versions- und Build-Informationen dieser Installation.</p>
+  </div>
+
+  <div class="bg-white rounded-lg border border-slate-200 shadow-sm divide-y divide-slate-100">
+    <div class="flex justify-between gap-4 px-5 py-3 text-sm">
+      <span class="text-slate-500">Version</span>
+      <span class="font-mono font-semibold text-slate-800">{{ BUILD.version }}</span>
+    </div>
+    <div class="flex justify-between gap-4 px-5 py-3 text-sm">
+      <span class="text-slate-500">Build (Commit)</span>
+      <span class="font-mono text-slate-800">
+        {% if BUILD.commit_url %}
+        <a href="{{ BUILD.commit_url }}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">{{ BUILD.sha }} ↗</a>
+        {% else %}{{ BUILD.sha }}{% endif %}
+      </span>
+    </div>
+    <div class="flex justify-between gap-4 px-5 py-3 text-sm">
+      <span class="text-slate-500">Build-Datum</span>
+      <span class="font-mono text-slate-800">{{ BUILD.date or '—' }}</span>
+    </div>
+    <div class="flex justify-between gap-4 px-5 py-3 text-sm">
+      <span class="text-slate-500">Datenbank-Schema</span>
+      <span class="font-mono text-slate-800">
+        v{{ db_version }}{% if db_version != db_latest %} <span class="text-amber-600">(erwartet: v{{ db_latest }})</span>{% endif %}
+      </span>
+    </div>
+    <div class="flex justify-between gap-4 px-5 py-3 text-sm">
+      <span class="text-slate-500">Python</span>
+      <span class="font-mono text-slate-800">{{ python_version }}</span>
+    </div>
+  </div>
+
+  {% if BUILD.sha == 'dev' %}
+  <p class="text-xs text-slate-400">„dev“: Diese Installation wurde lokal gebaut, nicht über das GitHub-Image.</p>
+  {% endif %}
+
+  <div class="flex flex-wrap gap-4 text-sm">
+    <a href="{{ BUILD.repo_url }}" target="_blank" rel="noopener" class="text-blue-600 hover:underline">Quellcode auf GitHub ↗</a>
+    <a href="/api/v1/docs" target="_blank" class="text-blue-600 hover:underline">API (Swagger) ↗</a>
+    <a href="/api-docs" class="text-blue-600 hover:underline">API-Referenz</a>
+  </div>
+</div>
+{% endblock %}
