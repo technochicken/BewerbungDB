@@ -7,6 +7,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
+# Injected by the GitHub Actions build; shown on the About page and login screen.
+ARG BUILD_SHA=""
+ARG BUILD_DATE=""
+ENV BUILD_SHA=$BUILD_SHA BUILD_DATE=$BUILD_DATE
+
 RUN mkdir -p data
 
 EXPOSE 8000

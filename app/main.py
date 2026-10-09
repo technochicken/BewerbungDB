@@ -59,6 +59,7 @@ from app.api.jobs import router as jobs_router, SORT_MAP
 from app.api.searches import router as searches_router
 from app.services.poller import poll_all_active, check_all_urls
 from app.services.ai_provider import PROVIDERS as AI_PROVIDERS
+from app.version import VERSION, build_info
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -179,7 +180,7 @@ Job IDs are short random strings (e.g. `a3f9c21b7e`)."""
 # HTML routes. The public API spec is served under /api/v1/ (see below).
 app = FastAPI(
     title="BewerbungsDB API",
-    version="1.0.0",
+    version=VERSION,
     description=API_DESCRIPTION,
     lifespan=lifespan,
     docs_url=None,
@@ -235,6 +236,7 @@ BASE_DIR = Path(__file__).parent
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 
+templates.env.globals["BUILD"] = build_info()
 templates.env.globals["STATUS_COLORS"] = STATUS_COLORS
 templates.env.globals["ALL_STATUSES"] = ALL_STATUSES
 templates.env.globals["SORT_OPTIONS"] = {
@@ -1324,6 +1326,23 @@ def activity_log(
         "current_event": event,
         "limit": limit,
         "today": today,
+    })
+
+
+@app.get("/about", response_class=HTMLResponse)
+def about_page(request: Request):
+    from app.database import get_connection, LATEST_SCHEMA_VERSION
+    import platform
+    conn = get_connection()
+    try:
+        db_version = conn.execute("PRAGMA user_version").fetchone()[0]
+    finally:
+        conn.close()
+    return templates.TemplateResponse("about.html", {
+        "request": request,
+        "db_version": db_version,
+        "db_latest": LATEST_SCHEMA_VERSION,
+        "python_version": platform.python_version(),
     })
 
 
