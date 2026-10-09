@@ -2,7 +2,8 @@ import logging
 import sqlite3
 import uuid
 from contextlib import contextmanager
-from app.config import DB_PATH
+from datetime import datetime, timezone
+from app.config import DB_PATH, DATA_DIR
 
 logger = logging.getLogger(__name__)
 
@@ -182,79 +183,159 @@ def get_db():
 
 
 def init_db():
+    """Create/upgrade the database. Runs on every start, so deploying a new
+    image is enough: pending schema migrations are applied automatically
+    (after an automatic backup). See the MIGRATIONS section below."""
+    conn = get_connection()
+    fresh = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='jobs'").fetchone() is None
+    conn.close()
     with get_db() as conn:
         conn.executescript(SCHEMA)
-    _migrate_job_ids()
+    if fresh:
+        _set_schema_version(LATEST_SCHEMA_VERSION)  # SCHEMA is already the newest layout
+    else:
+        _apply_schema_migrations()
     _run_migrations()
     from app.auth import init_auth
     init_auth()
 
 
-def _migrate_job_ids():
-    """One-time rebuild of jobs/job_tags/job_history from INTEGER ids to short random text ids."""
-    conn = get_connection()
-    conn.isolation_level = None  # manage the transaction manually
-    try:
-        col = next((r for r in conn.execute("PRAGMA table_info(jobs)") if r["name"] == "id"), None)
-        if col is None or col["type"].upper() != "INTEGER":
-            return
-        logger.info("Migrating job IDs to short UUIDs")
-        conn.execute("PRAGMA foreign_keys = OFF")
-        conn.execute("BEGIN")
-        old_ids = [r[0] for r in conn.execute("SELECT id FROM jobs ORDER BY id")]
-        mapping = {}
-        used = set()
-        for oid in old_ids:
+def _mig_001_text_job_ids(conn):
+    """Rebuild jobs/job_tags/job_history from INTEGER ids to short random text ids."""
+    col = next((r for r in conn.execute("PRAGMA table_info(jobs)") if r["name"] == "id"), None)
+    if col is None or col["type"].upper() != "INTEGER":
+        return  # already migrated (or fresh database)
+    logger.info("Migrating job IDs to short UUIDs")
+    old_ids = [r[0] for r in conn.execute("SELECT id FROM jobs ORDER BY id")]
+    mapping = {}
+    used = set()
+    for oid in old_ids:
+        nid = new_job_id()
+        while nid in used:
             nid = new_job_id()
-            while nid in used:
-                nid = new_job_id()
-            used.add(nid)
-            mapping[oid] = nid
-        conn.execute("CREATE TEMP TABLE _job_id_map (old INTEGER PRIMARY KEY, new TEXT NOT NULL)")
-        conn.executemany("INSERT INTO _job_id_map VALUES (?, ?)", list(mapping.items()))
+        used.add(nid)
+        mapping[oid] = nid
+    conn.execute("CREATE TEMP TABLE _job_id_map (old INTEGER PRIMARY KEY, new TEXT NOT NULL)")
+    conn.executemany("INSERT INTO _job_id_map VALUES (?, ?)", list(mapping.items()))
 
-        cols = [r["name"] for r in conn.execute("PRAGMA table_info(jobs)") if r["name"] != "id"]
-        col_list = ", ".join(cols)
-        conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
-        conn.execute("DROP INDEX IF EXISTS idx_jobs_external")
-        conn.execute("DROP INDEX IF EXISTS idx_jobs_status")
-        conn.execute("DROP INDEX IF EXISTS idx_jobs_created")
-        conn.execute("ALTER TABLE job_tags RENAME TO job_tags_old")
-        conn.execute("ALTER TABLE job_history RENAME TO job_history_old")
-        conn.execute("DROP INDEX IF EXISTS idx_history_job")
-        # recreate tables with text ids (statement by statement: executescript would commit)
-        for stmt in SCHEMA.split(";"):
-            if stmt.strip():
-                conn.execute(stmt)
-        new_cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
-        for table, column, sql in MIGRATIONS:
-            if table == "jobs" and column in cols and column not in new_cols:
-                conn.execute(sql)
-        conn.execute(
-            f"INSERT INTO jobs (id, {col_list}) "
-            f"SELECT m.new, {', '.join('o.' + c for c in cols)} "
-            "FROM jobs_old o JOIN _job_id_map m ON m.old = o.id"
-        )
-        conn.execute(
-            "INSERT INTO job_tags (job_id, tag) "
-            "SELECT m.new, t.tag FROM job_tags_old t JOIN _job_id_map m ON m.old = t.job_id"
-        )
-        conn.execute(
-            "INSERT INTO job_history (id, job_id, field, old_value, new_value, changed_at) "
-            "SELECT h.id, m.new, h.field, h.old_value, h.new_value, h.changed_at "
-            "FROM job_history_old h JOIN _job_id_map m ON m.old = h.job_id"
-        )
-        conn.execute("DROP TABLE job_tags_old")
-        conn.execute("DROP TABLE job_history_old")
-        conn.execute("DROP TABLE jobs_old")
-        conn.execute("DROP TABLE _job_id_map")
-        conn.execute("COMMIT")
-    except Exception:
-        if conn.in_transaction:
-            conn.execute("ROLLBACK")
-        raise
+    cols = [r["name"] for r in conn.execute("PRAGMA table_info(jobs)") if r["name"] != "id"]
+    col_list = ", ".join(cols)
+    conn.execute("ALTER TABLE jobs RENAME TO jobs_old")
+    conn.execute("DROP INDEX IF EXISTS idx_jobs_external")
+    conn.execute("DROP INDEX IF EXISTS idx_jobs_status")
+    conn.execute("DROP INDEX IF EXISTS idx_jobs_created")
+    conn.execute("ALTER TABLE job_tags RENAME TO job_tags_old")
+    conn.execute("ALTER TABLE job_history RENAME TO job_history_old")
+    conn.execute("DROP INDEX IF EXISTS idx_history_job")
+    # recreate tables with text ids (statement by statement: executescript would commit)
+    for stmt in SCHEMA.split(";"):
+        if stmt.strip():
+            conn.execute(stmt)
+    new_cols = {r["name"] for r in conn.execute("PRAGMA table_info(jobs)")}
+    for table, column, sql in MIGRATIONS:
+        if table == "jobs" and column in cols and column not in new_cols:
+            conn.execute(sql)
+    conn.execute(
+        f"INSERT INTO jobs (id, {col_list}) "
+        f"SELECT m.new, {', '.join('o.' + c for c in cols)} "
+        "FROM jobs_old o JOIN _job_id_map m ON m.old = o.id"
+    )
+    conn.execute(
+        "INSERT INTO job_tags (job_id, tag) "
+        "SELECT m.new, t.tag FROM job_tags_old t JOIN _job_id_map m ON m.old = t.job_id"
+    )
+    conn.execute(
+        "INSERT INTO job_history (id, job_id, field, old_value, new_value, changed_at) "
+        "SELECT h.id, m.new, h.field, h.old_value, h.new_value, h.changed_at "
+        "FROM job_history_old h JOIN _job_id_map m ON m.old = h.job_id"
+    )
+    conn.execute("DROP TABLE job_tags_old")
+    conn.execute("DROP TABLE job_history_old")
+    conn.execute("DROP TABLE jobs_old")
+    conn.execute("DROP TABLE _job_id_map")
+
+
+# ── Versioned schema migrations ───────────────────────────────────────────────
+#
+# HOW TO CHANGE THE DATABASE IN THE FUTURE
+#   1. Update SCHEMA above so brand-new installs get the final layout.
+#   2. Append ONE entry to SCHEMA_MIGRATIONS with the next version number and a
+#      function taking an open connection that upgrades an existing database.
+#      (A plain new nullable column can instead go into MIGRATIONS above.)
+#   3. Push to master. The image is rebuilt; when the container starts it backs
+#      up the database to data/backups/ and applies the pending migrations.
+#      If a migration fails, it is rolled back, the old data stays untouched
+#      and the container exits with the error (restore from data/backups/).
+#
+# The applied version is stored in SQLite's PRAGMA user_version.
+SCHEMA_MIGRATIONS = [
+    (1, "job ids: integer -> short text ids", _mig_001_text_job_ids),
+]
+LATEST_SCHEMA_VERSION = SCHEMA_MIGRATIONS[-1][0]
+KEEP_BACKUPS = 5
+
+
+def _get_schema_version(conn) -> int:
+    return conn.execute("PRAGMA user_version").fetchone()[0]
+
+
+def _set_schema_version(version: int) -> None:
+    conn = get_connection()
+    try:
+        conn.execute(f"PRAGMA user_version = {int(version)}")
     finally:
-        conn.execute("PRAGMA foreign_keys = ON")
+        conn.close()
+
+
+def _backup_database(from_version: int) -> None:
+    """Copy the live database to data/backups/ (consistent, via the SQLite backup API)."""
+    backup_dir = DATA_DIR / "backups"
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    target = backup_dir / f"jobs-v{from_version}-{stamp}.db"
+    src = sqlite3.connect(str(DB_PATH))
+    dst = sqlite3.connect(str(target))
+    try:
+        src.backup(dst)
+    finally:
+        dst.close()
+        src.close()
+    for old in sorted(backup_dir.glob("jobs-v*.db"))[:-KEEP_BACKUPS]:
+        old.unlink()
+    logger.info("Database backed up to %s", target)
+
+
+def _apply_schema_migrations():
+    conn = get_connection()
+    conn.isolation_level = None  # manage transactions manually
+    try:
+        current = _get_schema_version(conn)
+        pending = [m for m in SCHEMA_MIGRATIONS if m[0] > current]
+        if not pending:
+            return
+        conn.close()
+        _backup_database(current)
+        conn = get_connection()
+        conn.isolation_level = None
+        # foreign keys must be off while tables are rebuilt (cannot change inside a transaction)
+        conn.execute("PRAGMA foreign_keys = OFF")
+        for version, description, fn in pending:
+            logger.info("Applying schema migration %d: %s", version, description)
+            conn.execute("BEGIN")
+            try:
+                fn(conn)
+                conn.execute(f"PRAGMA user_version = {version}")
+                conn.execute("COMMIT")
+            except Exception:
+                if conn.in_transaction:
+                    conn.execute("ROLLBACK")
+                logger.error("Schema migration %d failed – rolled back; backup is in %s", version, DATA_DIR / "backups")
+                raise
+    finally:
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+        except sqlite3.Error:
+            pass
         conn.close()
 
 
